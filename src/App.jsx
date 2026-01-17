@@ -22,7 +22,7 @@ import {
   arrayUnion
 } from 'firebase/firestore';
 
-// --- Firebase 設定與初始化 ---
+// --- Firebase Configuration & Initialization ---
 const APP_ID = 'cadet-voting-system';
 
 // ★★★ 請在此處填入您從 Firebase Console 取得的設定 ★★★
@@ -622,6 +622,7 @@ const App = () => {
         setViewMode('teacher');
         setShowPasswordModal(false);
         setFailedAttempts(0); 
+        // Reset student voting state when entering teacher mode
         setDraftVotes({});
         setCurrentVoter("");
         setHasSubmitted(false);
@@ -712,6 +713,11 @@ const App = () => {
       </div>
     );
   }
+
+  // Define filteredPositions for Main Render
+  const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
+    name.includes(searchTerm) || code.includes(searchTerm)
+  );
 
   // --- MAIN APP RENDER ---
   return (
@@ -983,33 +989,48 @@ const App = () => {
               const p1Candidates = statistics[code]?.[1] || [];
               const p2Candidates = statistics[code]?.[2] || [];
               const p3Candidates = statistics[code]?.[3] || [];
+
               const p1Count = p1Candidates.length;
               const p2Count = p2Candidates.length;
+              
               const isP2Active = p1Count < candidateLimit;
               const isP3Active = (p1Count + p2Count) < candidateLimit;
-              
+
+              // Check if position is "Full" (elected count >= quota)
               const codeStr = String(code);
               const quota = (codeStr === '1' || codeStr === '2') ? 1 : 2;
               let electedCount = 0;
-              Object.values(electionState.selected || {}).forEach(pos => { if (pos === codeStr) electedCount++; });
+              Object.values(electionState.selected || {}).forEach(pos => {
+                if (pos === codeStr) electedCount++;
+              });
               const isPositionFull = electedCount >= quota;
 
+              // Card styling logic
               const isMissingHighlight = viewMode === 'student' && missingCodes.includes(String(code));
+              
+              // Check if student can vote here: Not full, has candidates
               const hasCandidates = p1Candidates.length > 0 || (isP2Active && p2Candidates.length > 0) || (isP3Active && p3Candidates.length > 0);
               const isVoteable = !isPositionFull && hasCandidates;
               
-              const voteableStyle = viewMode === 'student' && isVoteable ? 'border-indigo-300 shadow-indigo-100 shadow-lg bg-sky-50' : 'border-slate-50 bg-white';
-              const borderClass = isMissingHighlight ? 'border-orange-400 ring-4 ring-orange-100 shadow-xl bg-orange-50' : voteableStyle;
+              // Student View Highlight for Voteable Cards
+              const voteableStyle = viewMode === 'student' && isVoteable 
+                ? 'border-indigo-300 shadow-indigo-100 shadow-lg bg-sky-50' 
+                : 'border-slate-50 bg-white';
+              
+              const borderClass = isMissingHighlight 
+                ? 'border-orange-400 ring-4 ring-orange-100 shadow-xl bg-orange-50' 
+                : voteableStyle;
 
               const renderGroup = (candidates, rank, active, color) => {
                    const effectiveActive = active && !isPositionFull;
-                   let bgClass, textClass;
+                   let bgClass, textClass, shadowClass;
+                   
                    if (effectiveActive) {
-                      if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; }
-                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass = 'text-orange-400'; }
-                      else { bgClass = 'bg-amber-300'; textClass = 'text-amber-400'; }
+                      if (color === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
+                      else if (color === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
+                      else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
                    } else {
-                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400';
+                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
                    }
 
                    return (
@@ -1023,43 +1044,67 @@ const App = () => {
                                const key = `${code}_${s}`;
                                const vCount = (voteRecords[key] || []).length;
                                const isDrafted = draftVotes[code] === s;
+                               
                                const selectedPos = electionState.selected?.[s];
                                const isSelectedForThis = selectedPos === String(code);
                                const isSelectedForOther = selectedPos && selectedPos !== String(code);
                                
-                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               // Interaction disabled if:
+                               // 1. Group inactive (limit reached) OR Position Full
+                               // 2. Teacher mode
+                               // 3. Candidate already selected (for this or other)
+                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
                                
-                               const selectedStyle = isSelectedForThis ? 'bg-red-800 text-white ring-0 shadow-sm' : '';
-                               const excludedStyle = isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : '';
+                               // Style for selected candidate (This position)
+                               const selectedStyle = isSelectedForThis 
+                                 ? 'ring-0 shadow-sm' // Removed border, reduced padding logic in className
+                                 : '';
+                                 
+                               // Style for excluded candidate (Selected elsewhere)
+                               // Now same as inactive default + icon
+                               const excludedStyle = isSelectedForOther
+                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                 : '';
+                                 
+                               // Cursor logic
+                               const cursorClass = (isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : (isDisabled && viewMode === 'student' ? 'cursor-not-allowed' : 'cursor-pointer');
 
                                return (
                                   <div key={i} className="flex items-center gap-1">
                                      <button 
                                        onClick={() => {
-                                          if (viewMode === 'student' && isActive && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
                                           if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
                                        }}
-                                       disabled={isDisabled && viewMode === 'student'}
+                                       disabled={isDisabled && viewMode === 'student'} 
                                        className={`
                                           px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
                                           ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
                                           ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
+                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther && shadowClass}
                                           ${selectedStyle}
                                           ${excludedStyle}
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
-                                          ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
+                                          ${viewMode === 'student' && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
-                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
+                                          ${isDrafted 
+                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
+                                            : ''}
+                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
+                                          ${cursorClass}
                                        `}
                                        title={getStudentFullName(s)}
                                      >
+                                        {/* 卜 Icon */}
                                         {(isSelectedForThis || isSelectedForOther) && (
                                            <span className={`rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border ${isSelectedForThis ? 'bg-red-600 text-white border-white' : 'bg-transparent text-slate-400 border-slate-300'}`}>卜</span>
                                         )}
                                         {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3}/>}
                                         {getStudentNameLabel(s)}
+                                        {viewMode === 'student' && isDisabled && !isSelectedForThis && !isSelectedForOther && <div className="absolute inset-0 bg-white/50 rounded-xl cursor-not-allowed" />}
                                      </button>
+                                     
+                                     {/* Teacher View OR Student View (Submitted): Show Votes */}
                                      {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
                                         <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
                                      )}
@@ -1072,26 +1117,28 @@ const App = () => {
               };
 
               return (
-                 <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
-                    <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
-                       <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
-                          <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
-                          {name}
-                          {isPositionFull && <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">滿</span>}
-                       </h3>
-                    </div>
-                    <div className="p-3 space-y-3 flex-1">
-                       {renderGroup(p1Candidates, 1, true, 'red')}
-                       {renderGroup(p2Candidates, 2, isP2Active, 'orange')}
-                       {renderGroup(p3Candidates, 3, isP3Active, 'yellow')}
-                    </div>
-                 </div>
-              )
+              <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
+                <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
+                  <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                    <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
+                    {name}
+                    {isPositionFull && (
+                      <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">
+                        滿
+                      </span>
+                    )}
+                  </h3>
+                </div>
+                
+                <div className="p-3 space-y-3 flex-1">
+                  {renderPriorityGroup(p1Candidates, 1, true, 'red')}
+                  {renderPriorityGroup(p2Candidates, 2, isP2Active, 'orange')}
+                  {renderPriorityGroup(p3Candidates, 3, isP3Active, 'yellow')}
+                </div>
+              </div>
+            );
             })}
           </div>
-
-          {/* Viewer / Editor Modals ... (Same as before) */}
-          {/* ... */}
         </main>
       </div>
     </>
