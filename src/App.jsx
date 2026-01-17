@@ -53,7 +53,8 @@ try {
 // 學生部分已改為「姓名自動比對」，此處只需填寫老師的 Email
 const USER_MAPPING = {
   // ★★★ 老師請在此填入您的 Gmail ★★★
-  "tea-0180@kfjh.tc.edu.tw": "蔡進雄",
+  "tea-0180@kfjh.tc.edu.tw": "TEACHER",
+  "susi@st.tc.edu.tw": "TEACHER",
 };
 
 // 為了方便您測試，這裡設一個「測試模式」
@@ -1101,3 +1102,4 @@ const App = () => {
 
 
 export default App;
+
