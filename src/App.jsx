@@ -9,7 +9,7 @@ import {
 
 // Firebase imports
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -31,7 +31,7 @@ import {
 // --- Firebase Configuration & Initialization ---
 const APP_ID = 'cadet-voting-system';
 
-// ★★★ 請在此處填入您從 Firebase Console 取得的設定 ★★★
+// ★★★ 正式環境 Firebase 設定 ★★★
 const YOUR_FIREBASE_CONFIG = {
   apiKey: "AIzaSyAam5iqLJDb4TQJ_KXMcXpJdbd0leNNCE0",
   authDomain: "vote-9468a.firebaseapp.com",
@@ -43,9 +43,7 @@ const YOUR_FIREBASE_CONFIG = {
 
 let app, auth, db;
 try {
-  // 優先嘗試使用環境變數 (預覽環境)，若無則使用本地設定
-  const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : YOUR_FIREBASE_CONFIG;
-  app = initializeApp(config);
+  app = initializeApp(YOUR_FIREBASE_CONFIG);
   auth = getAuth(app);
   db = getFirestore(app);
 } catch (e) {
@@ -57,12 +55,6 @@ try {
 const USER_MAPPING = {
   "tea-0180@kfjh.tc.edu.tw": "TEACHER",
   "susi@st.tc.edu.tw": "TEACHER",
-};
-
-// 測試模式設定
-const TEST_CONFIG = {
-  allowAnyEmail: true,       
-  defaultTestRole: "01"      
 };
 
 // 學生資料庫
@@ -132,6 +124,8 @@ const App = () => {
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [viewingVoters, setViewingVoters] = useState(null); 
+  
+  // Submit Process States
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -184,22 +178,50 @@ const App = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
+        // Logged in
+        setCurrentUser(user);
+        
         const email = user.email;
+        const displayName = user.displayName || ""; 
+        
+        let role = null;
+        let mode = 'login';
+
+        // 1. 優先檢查是否為老師 (比對 Email)
         if (email && USER_MAPPING[email] === 'TEACHER') {
-          setUserRole('TEACHER');
-          setViewMode('teacher');
-          setLoginError('');
-          fetchData();
-        } else {
-          if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
-             setViewMode('student');
-             fetchData();
+          role = 'TEACHER';
+          mode = 'teacher';
+        } 
+        // 2. 若不是老師，則檢查名稱是否在學生名單中 (比對完整字串: 80501楊子青)
+        else {
+          if (STUDENT_FULL_ID_MAP[displayName]) {
+            role = STUDENT_FULL_ID_MAP[displayName]; // 取得座號
+            mode = 'student';
+          } else if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
+             // 選單登入 (匿名)
+             role = userRole;
+             mode = 'student';
           } else if (!user.isAnonymous) {
-             setLoginError('非授權的教師帳號。學生請使用下方「學生專用通道」登入。');
+             // 誤用未授權 Google 登入
+             setLoginError(`登入失敗：您的名稱「${displayName}」不在班級名單中。`);
              signOut(auth);
+             return;
           }
         }
+
+        if (role) {
+          setUserRole(role);
+          setViewMode(mode);
+          setLoginError('');
+          
+          if (mode === 'student') {
+             setCurrentVoter(role);
+          }
+          
+          fetchData(); 
+        } 
       } else {
+        // Not logged in
         setCurrentUser(null);
       }
     });
@@ -210,18 +232,21 @@ const App = () => {
   useEffect(() => {
     if (!db || !currentUser) return;
     
+    // Listen to Vote Data
     const votesRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
     const unsubVotes = onSnapshot(votesRef, (docSnap) => {
       if (docSnap.exists()) setVoteRecords(docSnap.data());
       else setVoteRecords({});
     }, err => console.log("Votes sync pending..."));
 
+    // Listen to Election State
     const electionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'electionState', 'global');
     const unsubElection = onSnapshot(electionRef, (docSnap) => {
       if (docSnap.exists()) setElectionState(docSnap.data());
       else setElectionState({ selected: {} });
     });
 
+    // Listen to Login Logs (Teacher Only)
     let unsubLogs = () => {};
     if (viewMode === 'teacher') {
       const logsQuery = query(
@@ -278,6 +303,7 @@ const App = () => {
 
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
+    setLoginError('');
     try {
       await signInWithPopup(auth, provider);
     } catch (error) {
@@ -291,7 +317,9 @@ const App = () => {
       setLoginError('請先選擇您的座號！');
       return;
     }
+    
     setLoading(true);
+    
     try {
       const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', selectedLoginSeat);
       const sessionSnap = await getDoc(sessionRef);
@@ -305,7 +333,9 @@ const App = () => {
            return;
         }
       }
+
       await performLogin(selectedLoginSeat, "登入成功");
+
     } catch (error) {
       console.error("Check Session Failed", error);
       setLoginError('無法驗證登入狀態，請檢查網路。');
@@ -353,6 +383,7 @@ const App = () => {
         await deleteDoc(sessionRef); 
       } catch (e) { /* ignore */ }
     }
+    
     signOut(auth);
     setDraftVotes({}); 
     setHasSubmitted(false);
@@ -433,11 +464,11 @@ const App = () => {
     }
   };
 
+  // Student Auto Check
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && !hasSubmitted) {
       const newDrafts = { ...draftVotes };
       let hasChanges = false;
-
       Object.keys(POSITION_MAP).forEach(posCode => {
         const code = String(posCode);
         const quota = (code === '1' || code === '2') ? 1 : 2;
@@ -554,6 +585,7 @@ const App = () => {
     }
   };
 
+  // Helper Functions
   const formatSeatNo = (val) => {
     if (!val) return "";
     const digits = val.replace(/[^0-9]/g, '');
@@ -604,10 +636,12 @@ const App = () => {
     setViewingVoters({ posCode, candidateSeatNo, candidateName, voters, ownChoices });
   };
   
+  // ... Editing & Modal handlers ...
   const handleClearAll = () => setVisualChoices([]);
   const handleRemoveChoice = (idx) => setVisualChoices(prev => prev.filter((_, i) => i !== idx));
   const handleAddChoice = (code) => { if(visualChoices.length < 19) setVisualChoices([...visualChoices, code]) };
 
+  // ... handleCopy, getDuplicates, fetchData, processStudentData, renderAdvancedBattery ... 
   const handleCopy = () => {
     const textArea = document.createElement("textarea");
     textArea.value = generatedString;
@@ -788,7 +822,7 @@ const App = () => {
     }
   };
 
-  // Define filteredPositions BEFORE usage
+  // Define filteredPositions for Main Render
   const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
     name.includes(searchTerm) || code.includes(searchTerm)
   );
@@ -911,7 +945,6 @@ const App = () => {
         
         <SuccessOverlay />
         <StudentSubmitFab />
-        <ForceLoginModal />
         
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImportData} />
 
@@ -948,6 +981,7 @@ const App = () => {
               </div>
            </div>
         )}
+        <ForceLoginModal />
 
         <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-10 shadow-sm">
            <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
@@ -1250,8 +1284,8 @@ const App = () => {
                    let bgClass, textClass, shadowClass;
                    
                    if (effectiveActive) {
-                      if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; shadowClass='shadow-rose-100'; }
-                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass = 'text-orange-400'; shadowClass='shadow-orange-100'; }
+                      if (color === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
+                      else if (color === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
                       else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
                    } else {
                       bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
@@ -1297,7 +1331,7 @@ const App = () => {
                                   <div key={i} className="flex items-center gap-1">
                                      <button 
                                        onClick={() => {
-                                          if (viewMode === 'student' && isActive && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
                                           if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
                                        }}
                                        disabled={isDisabled && viewMode === 'student'} 
@@ -1311,8 +1345,11 @@ const App = () => {
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
                                           ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
-                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
+                                          ${isDrafted 
+                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
+                                            : ''}
+                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
+                                          ${cursorClass}
                                        `}
                                        title={getStudentFullName(s)}
                                      >
