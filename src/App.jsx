@@ -187,7 +187,6 @@ const App = () => {
         // Logged in
         setCurrentUser(user);
         
-        // 檢查是否為老師
         const email = user.email;
         if (email && USER_MAPPING[email] === 'TEACHER') {
           setUserRole('TEACHER');
@@ -1299,7 +1298,7 @@ const App = () => {
                                // 1. Group inactive (limit reached) OR Position Full
                                // 2. Teacher mode
                                // 3. Candidate already selected (for this or other)
-                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
                                
                                // Style for selected candidate (This position)
                                const selectedStyle = isSelectedForThis 
@@ -1319,7 +1318,7 @@ const App = () => {
                                   <div key={i} className="flex items-center gap-1">
                                      <button 
                                        onClick={() => {
-                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'student' && active && !isDisabled) handleToggleDraftVote(code, s);
                                           if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
                                        }}
                                        disabled={isDisabled && viewMode === 'student'} 
@@ -1331,7 +1330,7 @@ const App = () => {
                                           ${selectedStyle}
                                           ${excludedStyle}
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
-                                          ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
+                                          ${viewMode === 'student' && active && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
                                           ${isDrafted 
                                             ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
