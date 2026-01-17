@@ -132,10 +132,14 @@ const App = () => {
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [viewingVoters, setViewingVoters] = useState(null); 
+  
+  // Submit Process States
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showForceLoginModal, setShowForceLoginModal] = useState(false);
+  const [missingPositions, setMissingPositions] = useState([]); 
+  const [missingCodes, setMissingCodes] = useState([]); 
 
   // Password Challenge
   const [passwordInput, setPasswordInput] = useState('');
@@ -165,8 +169,6 @@ const App = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [currentVoter, setCurrentVoter] = useState(""); 
-  const [missingPositions, setMissingPositions] = useState([]); 
-  const [missingCodes, setMissingCodes] = useState([]); 
   
   const fileInputRef = useRef(null);
 
@@ -187,7 +189,6 @@ const App = () => {
         // Logged in
         setCurrentUser(user);
         
-        // 檢查是否為老師
         const email = user.email;
         if (email && USER_MAPPING[email] === 'TEACHER') {
           setUserRole('TEACHER');
@@ -236,7 +237,6 @@ const App = () => {
     let unsubLogs = () => {};
     if (viewMode === 'teacher') {
       const logsQuery = query(
-        // *** FIX: Changed to 5 segments collection path to fix "Invalid collection reference" ***
         collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs'),
         orderBy('timestamp', 'desc'),
         limit(50)
@@ -278,7 +278,6 @@ const App = () => {
   const logActivity = async (seatNo, message) => {
     if (!db) return;
     try {
-      // *** FIX: Changed to 5 segments collection path to fix "Invalid collection reference" ***
       await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs'), {
         timestamp: serverTimestamp(),
         seatNo: seatNo,
@@ -315,6 +314,7 @@ const App = () => {
 
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
+        // 如果 Session 存在，視為衝突，要求強制登入
         if (true) { 
            setConflictIP(sessionData.ip || 'Unknown');
            setShowForceLoginModal(true); 
@@ -380,6 +380,7 @@ const App = () => {
     setUserRole(null);
     setViewMode('login');
     setSelectedLoginSeat(""); 
+    setMissingCodes([]);
   };
 
   const handleExportData = () => {
@@ -786,7 +787,6 @@ const App = () => {
         setViewMode('teacher');
         setShowPasswordModal(false);
         setFailedAttempts(0); 
-        // Reset student voting state when entering teacher mode
         setDraftVotes({});
         setCurrentVoter("");
         setHasSubmitted(false);
@@ -809,6 +809,76 @@ const App = () => {
       setPasswordError(true);
       setPasswordInput('');
     }
+  };
+
+  // --- SUB-COMPONENTS (Defined as functions here to avoid scope issues) ---
+
+  const ForceLoginModal = () => {
+    if (!showForceLoginModal) return null;
+    return (
+       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full border-4 border-rose-200 p-8 flex flex-col items-center">
+             <div className="bg-rose-100 p-4 rounded-full mb-4 text-rose-500"><AlertTriangle size={32} /></div>
+             <h3 className="text-xl font-bold text-slate-700 mb-2">重複登入偵測</h3>
+             <p className="text-slate-400 text-sm mb-2 text-center">座號 <span className="font-bold text-slate-600">{selectedLoginSeat}</span> 已在其他裝置 ({conflictIP}) 登入。</p>
+             <p className="text-rose-400 text-xs font-bold mb-6 text-center">若要強制登入，請輸入驗證密碼</p>
+             <input type="password" autoFocus className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-center font-bold text-slate-700 outline-none mb-4" placeholder="請輸入密碼..." value={forceLoginPassword} onChange={e => setForceLoginPassword(e.target.value)}/>
+             <div className="flex gap-3 w-full">
+                <button onClick={() => { setShowForceLoginModal(false); setForceLoginPassword(''); }} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-bold">取消</button>
+                <button onClick={handleForceLogin} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 shadow-lg shadow-rose-200">強制登入</button>
+             </div>
+          </div>
+       </div>
+    );
+  }
+
+  const SuccessOverlay = () => {
+    if (viewMode === 'student' && showSuccessModal) {
+      return (
+        <div className="fixed inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl border-4 border-teal-100 flex flex-col items-center animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-teal-100 rounded-full flex items-center justify-center mb-4 text-teal-500"><Check size={48} strokeWidth={3} /></div>
+            <h2 className="text-2xl font-bold text-slate-700 mb-2">投票已送出！</h2>
+            <p className="text-slate-500 font-medium">感謝您神聖的一票</p>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const StudentSubmitFab = () => {
+    const count = Object.keys(draftVotes).length;
+    if (viewMode !== 'student' || hasSubmitted) return null;
+
+    return (
+      <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-10 fade-in duration-500 flex items-center gap-3">
+        {!currentVoter && (
+          <div className="bg-rose-500 text-white text-sm font-bold px-4 py-2 rounded-xl animate-bounce">
+            請先在右上方選擇您的座號！
+          </div>
+        )}
+        <button
+          onClick={handleValidateAndSubmit}
+          disabled={count === 0 || isSubmitting || !currentVoter}
+          className={`flex items-center gap-2 px-6 py-4 rounded-full shadow-xl transition-all transform hover:scale-105 active:scale-95 ${
+            count > 0 && !isSubmitting && currentVoter
+              ? 'bg-gradient-to-r from-rose-400 to-orange-400 text-white hover:from-rose-500 hover:to-orange-500' 
+              : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+          }`}
+        >
+          {isSubmitting ? (
+            <RefreshCw className="animate-spin" size={24} />
+          ) : (
+            <Send size={24} fill="currentColor" />
+          )}
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-bold leading-none">送出審慎的一票</span>
+            <span className="text-xs font-medium opacity-90 leading-none mt-1">已選 {count} 位候選人</span>
+          </div>
+        </button>
+      </div>
+    );
   };
 
   // Define filteredPositions for Main Render
@@ -854,30 +924,12 @@ const App = () => {
     );
   }
 
-  // --- Force Login Modal (Only show if triggered) ---
-  const ForceLoginModal = () => {
-    if (!showForceLoginModal) return null;
-    return (
-       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full border-4 border-rose-200 p-8 flex flex-col items-center">
-             <div className="bg-rose-100 p-4 rounded-full mb-4 text-rose-500"><AlertTriangle size={32} /></div>
-             <h3 className="text-xl font-bold text-slate-700 mb-2">重複登入偵測</h3>
-             <p className="text-slate-400 text-sm mb-2 text-center">座號 <span className="font-bold text-slate-600">{selectedLoginSeat}</span> 已在其他裝置 ({conflictIP}) 登入。</p>
-             <p className="text-rose-400 text-xs font-bold mb-6 text-center">若要強制登入，請輸入驗證密碼</p>
-             <input type="password" autoFocus className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-center font-bold text-slate-700 outline-none mb-4" placeholder="請輸入密碼..." value={forceLoginPassword} onChange={e => setForceLoginPassword(e.target.value)}/>
-             <div className="flex gap-3 w-full">
-                <button onClick={() => { setShowForceLoginModal(false); setForceLoginPassword(''); }} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-bold">取消</button>
-                <button onClick={handleForceLogin} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 shadow-lg shadow-rose-200">強制登入</button>
-             </div>
-          </div>
-       </div>
-    );
-  }
-
   // --- MAIN APP UI ---
   return (
     <>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap');`}</style>
+      <style>
+        {`@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap');`}
+      </style>
       <div className={`min-h-screen pb-20 relative font-sans ${viewMode === 'teacher' ? 'bg-rose-50' : 'bg-slate-50'}`} style={{ fontFamily: '"Zen Maru Gothic", sans-serif' }}>
         
         <SuccessOverlay />
@@ -983,7 +1035,31 @@ const App = () => {
               </div>
            )}
 
-           {viewMode === 'teacher' && (
+           {/* ... Errors & Student Counts ... */}
+           {/* (Same logic, relying on viewMode) */}
+           {viewMode === 'teacher' && errors.length > 0 && (
+             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
+                {/* ... Error Block Content ... */}
+                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
+                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
+                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
+                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
+                  </h2>
+                  <div className="flex flex-wrap gap-3">
+                    {errors.map((err) => (
+                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
+                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
+                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
+                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+             </div>
+          )}
+
+          {viewMode === 'teacher' && (
               <div className="mb-8 animate-in fade-in slide-in-from-top-4">
                 <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
                   <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
@@ -1023,30 +1099,6 @@ const App = () => {
                 </div>
               </div>
            )}
-
-           {/* ... Errors & Student Counts ... */}
-           {/* (Same logic, relying on viewMode) */}
-           {viewMode === 'teacher' && errors.length > 0 && (
-             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
-                {/* ... Error Block Content ... */}
-                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
-                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
-                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
-                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
-                  </h2>
-                  <div className="flex flex-wrap gap-3">
-                    {errors.map((err) => (
-                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
-                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
-                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
-                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-             </div>
-          )}
 
           {studentCounts.length > 0 && (
             <div className="mb-8">
@@ -1221,8 +1273,8 @@ const App = () => {
                    let bgClass, textClass, shadowClass;
                    
                    if (effectiveActive) {
-                      if (color === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
-                      else if (color === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
+                      if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; shadowClass='shadow-rose-100'; }
+                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
                       else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
                    } else {
                       bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
@@ -1248,7 +1300,7 @@ const App = () => {
                                // 1. Group inactive (limit reached) OR Position Full
                                // 2. Teacher mode
                                // 3. Candidate already selected (for this or other)
-                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
                                
                                // Style for selected candidate (This position)
                                const selectedStyle = isSelectedForThis 
@@ -1282,11 +1334,8 @@ const App = () => {
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
                                           ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted 
-                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
-                                            : ''}
-                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
-                                          ${cursorClass}
+                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
+                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
                                        `}
                                        title={getStudentFullName(s)}
                                      >
