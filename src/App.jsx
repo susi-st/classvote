@@ -9,7 +9,7 @@ import {
 
 // Firebase imports
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -31,7 +31,7 @@ import {
 // --- Firebase Configuration & Initialization ---
 const APP_ID = 'cadet-voting-system';
 
-// ★★★ 正式環境 Firebase 設定 ★★★
+// ★★★ 請在此處填入您從 Firebase Console 取得的設定 ★★★
 const YOUR_FIREBASE_CONFIG = {
   apiKey: "AIzaSyAam5iqLJDb4TQJ_KXMcXpJdbd0leNNCE0",
   authDomain: "vote-9468a.firebaseapp.com",
@@ -43,7 +43,9 @@ const YOUR_FIREBASE_CONFIG = {
 
 let app, auth, db;
 try {
-  app = initializeApp(YOUR_FIREBASE_CONFIG);
+  // 優先嘗試使用環境變數 (預覽環境)，若無則使用本地設定
+  const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : YOUR_FIREBASE_CONFIG;
+  app = initializeApp(config);
   auth = getAuth(app);
   db = getFirestore(app);
 } catch (e) {
@@ -55,6 +57,12 @@ try {
 const USER_MAPPING = {
   "tea-0180@kfjh.tc.edu.tw": "TEACHER",
   "susi@st.tc.edu.tw": "TEACHER",
+};
+
+// 測試模式設定
+const TEST_CONFIG = {
+  allowAnyEmail: true,       
+  defaultTestRole: "01"      
 };
 
 // 學生資料庫
@@ -124,8 +132,6 @@ const App = () => {
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [viewingVoters, setViewingVoters] = useState(null); 
-  
-  // Submit Process States
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -181,45 +187,25 @@ const App = () => {
         // Logged in
         setCurrentUser(user);
         
+        // 檢查是否為老師
         const email = user.email;
-        const displayName = user.displayName || ""; 
-        
-        let role = null;
-        let mode = 'login';
-
-        // 1. 優先檢查是否為老師 (比對 Email)
         if (email && USER_MAPPING[email] === 'TEACHER') {
-          role = 'TEACHER';
-          mode = 'teacher';
-        } 
-        // 2. 若不是老師，則檢查名稱是否在學生名單中 (比對完整字串: 80501楊子青)
-        else {
-          if (STUDENT_FULL_ID_MAP[displayName]) {
-            role = STUDENT_FULL_ID_MAP[displayName]; // 取得座號
-            mode = 'student';
-          } else if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
-             // 選單登入 (匿名)
-             role = userRole;
-             mode = 'student';
+          setUserRole('TEACHER');
+          setViewMode('teacher');
+          setLoginError('');
+          fetchData();
+        } else {
+          // 如果不是老師，且目前是匿名登入狀態，檢查是否有指定的學生身份
+          if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
+             // 這是學生透過選單登入的流程，保持狀態
+             setViewMode('student');
+             fetchData();
           } else if (!user.isAnonymous) {
-             // 誤用未授權 Google 登入
-             setLoginError(`登入失敗：您的名稱「${displayName}」不在班級名單中。`);
+             // 誤用 Google 登入但非老師
+             setLoginError('非授權的教師帳號。學生請使用下方「學生專用通道」登入。');
              signOut(auth);
-             return;
           }
         }
-
-        if (role) {
-          setUserRole(role);
-          setViewMode(mode);
-          setLoginError('');
-          
-          if (mode === 'student') {
-             setCurrentVoter(role);
-          }
-          
-          fetchData(); 
-        } 
       } else {
         // Not logged in
         setCurrentUser(null);
@@ -270,10 +256,12 @@ const App = () => {
   // --- Session Monitor ---
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && db) {
+      // Listen to MY active session
       const sessionDocRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
       const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          // If the session ID in DB doesn't match MY session ID, I've been kicked
           if (data.sessionId && data.sessionId !== sessionId) {
             alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
             handleLogout();
@@ -303,7 +291,6 @@ const App = () => {
 
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
-    setLoginError('');
     try {
       await signInWithPopup(auth, provider);
     } catch (error) {
@@ -326,6 +313,7 @@ const App = () => {
 
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
+        // 如果 Session 存在，視為衝突，要求強制登入
         if (true) { 
            setConflictIP(sessionData.ip || 'Unknown');
            setShowForceLoginModal(true); 
@@ -945,6 +933,7 @@ const App = () => {
         
         <SuccessOverlay />
         <StudentSubmitFab />
+        <ForceLoginModal />
         
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImportData} />
 
@@ -981,7 +970,6 @@ const App = () => {
               </div>
            </div>
         )}
-        <ForceLoginModal />
 
         <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-10 shadow-sm">
            <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
@@ -1046,7 +1034,31 @@ const App = () => {
               </div>
            )}
 
-           {viewMode === 'teacher' && (
+           {/* ... Errors & Student Counts ... */}
+           {/* (Same logic, relying on viewMode) */}
+           {viewMode === 'teacher' && errors.length > 0 && (
+             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
+                {/* ... Error Block Content ... */}
+                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
+                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
+                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
+                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
+                  </h2>
+                  <div className="flex flex-wrap gap-3">
+                    {errors.map((err) => (
+                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
+                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
+                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
+                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+             </div>
+          )}
+
+          {viewMode === 'teacher' && (
               <div className="mb-8 animate-in fade-in slide-in-from-top-4">
                 <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
                   <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
@@ -1086,30 +1098,6 @@ const App = () => {
                 </div>
               </div>
            )}
-
-           {/* ... Errors & Student Counts ... */}
-           {/* (Same logic, relying on viewMode) */}
-           {viewMode === 'teacher' && errors.length > 0 && (
-             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
-                {/* ... Error Block Content ... */}
-                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
-                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
-                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
-                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
-                  </h2>
-                  <div className="flex flex-wrap gap-3">
-                    {errors.map((err) => (
-                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
-                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
-                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
-                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-             </div>
-          )}
 
           {studentCounts.length > 0 && (
             <div className="mb-8">
