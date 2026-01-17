@@ -132,14 +132,10 @@ const App = () => {
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [viewingVoters, setViewingVoters] = useState(null); 
-  
-  // Submit Process States
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showForceLoginModal, setShowForceLoginModal] = useState(false);
-  const [missingPositions, setMissingPositions] = useState([]); 
-  const [missingCodes, setMissingCodes] = useState([]); 
 
   // Password Challenge
   const [passwordInput, setPasswordInput] = useState('');
@@ -169,6 +165,8 @@ const App = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [currentVoter, setCurrentVoter] = useState(""); 
+  const [missingPositions, setMissingPositions] = useState([]); 
+  const [missingCodes, setMissingCodes] = useState([]); 
   
   const fileInputRef = useRef(null);
 
@@ -186,9 +184,6 @@ const App = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // Logged in
-        setCurrentUser(user);
-        
         const email = user.email;
         if (email && USER_MAPPING[email] === 'TEACHER') {
           setUserRole('TEACHER');
@@ -196,19 +191,15 @@ const App = () => {
           setLoginError('');
           fetchData();
         } else {
-          // 如果不是老師，且目前是匿名登入狀態，檢查是否有指定的學生身份
           if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
-             // 這是學生透過選單登入的流程，保持狀態
              setViewMode('student');
              fetchData();
           } else if (!user.isAnonymous) {
-             // 誤用 Google 登入但非老師
              setLoginError('非授權的教師帳號。學生請使用下方「學生專用通道」登入。');
              signOut(auth);
           }
         }
       } else {
-        // Not logged in
         setCurrentUser(null);
       }
     });
@@ -219,21 +210,18 @@ const App = () => {
   useEffect(() => {
     if (!db || !currentUser) return;
     
-    // Listen to Vote Data
     const votesRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
     const unsubVotes = onSnapshot(votesRef, (docSnap) => {
       if (docSnap.exists()) setVoteRecords(docSnap.data());
       else setVoteRecords({});
     }, err => console.log("Votes sync pending..."));
 
-    // Listen to Election State
     const electionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'electionState', 'global');
     const unsubElection = onSnapshot(electionRef, (docSnap) => {
       if (docSnap.exists()) setElectionState(docSnap.data());
       else setElectionState({ selected: {} });
     });
 
-    // Listen to Login Logs (Teacher Only)
     let unsubLogs = () => {};
     if (viewMode === 'teacher') {
       const logsQuery = query(
@@ -257,12 +245,10 @@ const App = () => {
   // --- Session Monitor ---
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && db) {
-      // Listen to MY active session
       const sessionDocRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
       const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // If the session ID in DB doesn't match MY session ID, I've been kicked
           if (data.sessionId && data.sessionId !== sessionId) {
             alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
             handleLogout();
@@ -305,16 +291,13 @@ const App = () => {
       setLoginError('請先選擇您的座號！');
       return;
     }
-    
     setLoading(true);
-    
     try {
       const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', selectedLoginSeat);
       const sessionSnap = await getDoc(sessionRef);
 
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
-        // 如果 Session 存在，視為衝突，要求強制登入
         if (true) { 
            setConflictIP(sessionData.ip || 'Unknown');
            setShowForceLoginModal(true); 
@@ -322,9 +305,7 @@ const App = () => {
            return;
         }
       }
-
       await performLogin(selectedLoginSeat, "登入成功");
-
     } catch (error) {
       console.error("Check Session Failed", error);
       setLoginError('無法驗證登入狀態，請檢查網路。');
@@ -372,7 +353,6 @@ const App = () => {
         await deleteDoc(sessionRef); 
       } catch (e) { /* ignore */ }
     }
-    
     signOut(auth);
     setDraftVotes({}); 
     setHasSubmitted(false);
@@ -453,11 +433,11 @@ const App = () => {
     }
   };
 
-  // Student Auto Check
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && !hasSubmitted) {
       const newDrafts = { ...draftVotes };
       let hasChanges = false;
+
       Object.keys(POSITION_MAP).forEach(posCode => {
         const code = String(posCode);
         const quota = (code === '1' || code === '2') ? 1 : 2;
@@ -574,7 +554,6 @@ const App = () => {
     }
   };
 
-  // Helper Functions
   const formatSeatNo = (val) => {
     if (!val) return "";
     const digits = val.replace(/[^0-9]/g, '');
@@ -625,12 +604,10 @@ const App = () => {
     setViewingVoters({ posCode, candidateSeatNo, candidateName, voters, ownChoices });
   };
   
-  // ... Editing & Modal handlers ...
   const handleClearAll = () => setVisualChoices([]);
   const handleRemoveChoice = (idx) => setVisualChoices(prev => prev.filter((_, i) => i !== idx));
   const handleAddChoice = (code) => { if(visualChoices.length < 19) setVisualChoices([...visualChoices, code]) };
 
-  // ... handleCopy, getDuplicates, fetchData, processStudentData, renderAdvancedBattery ... 
   const handleCopy = () => {
     const textArea = document.createElement("textarea");
     textArea.value = generatedString;
@@ -811,6 +788,11 @@ const App = () => {
     }
   };
 
+  // Define filteredPositions BEFORE usage
+  const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
+    name.includes(searchTerm) || code.includes(searchTerm)
+  );
+
   // --- SUB-COMPONENTS (Defined as functions here to avoid scope issues) ---
 
   const ForceLoginModal = () => {
@@ -880,11 +862,6 @@ const App = () => {
       </div>
     );
   };
-
-  // Define filteredPositions for Main Render
-  const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
-    name.includes(searchTerm) || code.includes(searchTerm)
-  );
 
   // --- LOGIN PAGE RENDER ---
   if (viewMode === 'login' || !currentUser) {
@@ -1035,31 +1012,7 @@ const App = () => {
               </div>
            )}
 
-           {/* ... Errors & Student Counts ... */}
-           {/* (Same logic, relying on viewMode) */}
-           {viewMode === 'teacher' && errors.length > 0 && (
-             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
-                {/* ... Error Block Content ... */}
-                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
-                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
-                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
-                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
-                  </h2>
-                  <div className="flex flex-wrap gap-3">
-                    {errors.map((err) => (
-                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
-                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
-                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
-                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-             </div>
-          )}
-
-          {viewMode === 'teacher' && (
+           {viewMode === 'teacher' && (
               <div className="mb-8 animate-in fade-in slide-in-from-top-4">
                 <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
                   <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
@@ -1099,6 +1052,30 @@ const App = () => {
                 </div>
               </div>
            )}
+
+           {/* ... Errors & Student Counts ... */}
+           {/* (Same logic, relying on viewMode) */}
+           {viewMode === 'teacher' && errors.length > 0 && (
+             <div className="mb-6 animate-in fade-in slide-in-from-top-4">
+                {/* ... Error Block Content ... */}
+                <div className="bg-white/80 border-2 border-rose-200 rounded-3xl p-5 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-300 via-orange-300 to-yellow-300"></div>
+                  <h2 className="text-rose-500 font-bold flex items-center gap-2 text-lg mb-4">
+                    <div className="bg-rose-100 p-1.5 rounded-full"><AlertTriangle className="text-rose-500" size={20} /></div>
+                    重複選填名單 <span className="text-xs font-bold text-rose-400 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">共 {errors.length} 位</span>
+                  </h2>
+                  <div className="flex flex-wrap gap-3">
+                    {errors.map((err) => (
+                      <button key={err.id} onClick={() => setEditingStudent(err)} className="bg-rose-50/50 border border-rose-100 p-3 rounded-2xl hover:bg-rose-50 hover:border-rose-300 transition-all text-left flex items-center gap-3 group w-auto min-w-fit shrink-0">
+                         <span className="bg-rose-400 text-white text-sm font-bold px-3 py-1.5 rounded-xl shadow-rose-200 shadow-md">{err.seatNo}</span>
+                         <span className="text-xs font-bold text-rose-400">重複代碼</span>
+                         <Edit3 size={18} className="text-rose-300 group-hover:text-rose-500" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+             </div>
+          )}
 
           {studentCounts.length > 0 && (
             <div className="mb-8">
@@ -1274,7 +1251,7 @@ const App = () => {
                    
                    if (effectiveActive) {
                       if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; shadowClass='shadow-rose-100'; }
-                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
+                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass = 'text-orange-400'; shadowClass='shadow-orange-100'; }
                       else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
                    } else {
                       bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
@@ -1300,7 +1277,7 @@ const App = () => {
                                // 1. Group inactive (limit reached) OR Position Full
                                // 2. Teacher mode
                                // 3. Candidate already selected (for this or other)
-                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
                                
                                // Style for selected candidate (This position)
                                const selectedStyle = isSelectedForThis 
@@ -1320,7 +1297,7 @@ const App = () => {
                                   <div key={i} className="flex items-center gap-1">
                                      <button 
                                        onClick={() => {
-                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'student' && isActive && !isDisabled) handleToggleDraftVote(code, s);
                                           if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
                                        }}
                                        disabled={isDisabled && viewMode === 'student'} 
@@ -1375,9 +1352,9 @@ const App = () => {
                 </div>
                 
                 <div className="p-3 space-y-3 flex-1">
-                  {renderPriorityGroup(p1Candidates, 1, true, 'red')}
-                  {renderPriorityGroup(p2Candidates, 2, isP2Active, 'orange')}
-                  {renderPriorityGroup(p3Candidates, 3, isP3Active, 'yellow')}
+                  {renderGroup(p1Candidates, 1, true, 'red')}
+                  {renderGroup(p2Candidates, 2, isP2Active, 'orange')}
+                  {renderGroup(p3Candidates, 3, isP3Active, 'yellow')}
                 </div>
               </div>
             );
