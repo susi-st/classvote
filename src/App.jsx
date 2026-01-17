@@ -112,8 +112,6 @@ const App = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);       
   const [loginError, setLoginError] = useState('');
-  
-  // *** FIX: Add missing state for selectedLoginSeat ***
   const [selectedLoginSeat, setSelectedLoginSeat] = useState("");
 
   const [rawRows, setRawRows] = useState([]); 
@@ -179,7 +177,6 @@ const App = () => {
       .then(data => setClientIP(data.ip))
       .catch(err => console.error("IP Fetch Error:", err));
       
-    // Generate a session ID for this browser tab instance
     setSessionId(Math.random().toString(36).substring(2, 15));
   }, []);
 
@@ -190,7 +187,6 @@ const App = () => {
         // Logged in
         setCurrentUser(user);
         
-        // 檢查是否為老師
         const email = user.email;
         if (email && USER_MAPPING[email] === 'TEACHER') {
           setUserRole('TEACHER');
@@ -200,11 +196,9 @@ const App = () => {
         } else {
           // 如果不是老師，且目前是匿名登入狀態，檢查是否有指定的學生身份
           if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
-             // 這是學生透過選單登入的流程，保持狀態
              setViewMode('student');
              fetchData();
           } else if (!user.isAnonymous) {
-             // 誤用 Google 登入但非老師
              setLoginError('非授權的教師帳號。學生請使用下方「學生專用通道」登入。');
              signOut(auth);
           }
@@ -259,12 +253,10 @@ const App = () => {
   // --- Session Monitor ---
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && db) {
-      // Listen to MY active session
       const sessionDocRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
       const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // If the session ID in DB doesn't match MY session ID, I've been kicked
           if (data.sessionId && data.sessionId !== sessionId) {
             alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
             handleLogout();
@@ -302,7 +294,6 @@ const App = () => {
     }
   };
 
-  // Student Direct Login with Conflict Check
   const handleStudentDirectLogin = async () => {
     if (!selectedLoginSeat) {
       setLoginError('請先選擇您的座號！');
@@ -339,7 +330,6 @@ const App = () => {
        setUserRole(seatNo);
        setCurrentVoter(seatNo);
 
-       // Update Active Session
        const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', seatNo);
        await setDoc(sessionRef, {
          ip: clientIP,
@@ -490,10 +480,7 @@ const App = () => {
           }
         }
       });
-
-      if (hasChanges) {
-        setDraftVotes(newDrafts);
-      }
+      if (hasChanges) setDraftVotes(newDrafts);
     }
   }, [viewMode, currentVoter, statistics, electionState, candidateLimit]); 
 
@@ -517,7 +504,6 @@ const App = () => {
     }
     const missing = [];
     const missingCodeList = [];
-    
     Object.keys(POSITION_MAP).forEach(posCode => {
       const code = String(posCode);
       const quota = (code === '1' || code === '2') ? 1 : 2;
@@ -572,9 +558,7 @@ const App = () => {
       await logActivity(currentVoter, "已完成票選");
       setHasSubmitted(true);
       setShowSuccessModal(true); 
-      setTimeout(() => {
-        setShowSuccessModal(false);
-      }, 2000);
+      setTimeout(() => setShowSuccessModal(false), 2000);
     } catch (e) {
       console.error("Voting error:", e);
       alert("投票送出失敗");
@@ -715,7 +699,11 @@ const App = () => {
       choiceParts.forEach(p => {
         const clean = p.toUpperCase().replace(/[^0-9X]/g, '');
         if (clean === "") return; 
-        if (clean !== 'X') { if (seen.has(clean)) duplicatesDetected.add(clean); seen.add(clean); effectiveChoices.push(clean); }
+        if (clean !== 'X') {
+            if (seen.has(clean)) duplicatesDetected.add(clean);
+            seen.add(clean);
+            effectiveChoices.push(clean);
+        }
       });
       tempStudentCounts.push({ seatNo: displaySeatNo, count: effectiveChoices.length, hasError: duplicatesDetected.size > 0, original: prefString, duplicateCodes: Array.from(duplicatesDetected) });
       if (duplicatesDetected.size > 0) {
@@ -736,7 +724,7 @@ const App = () => {
     else if (count >= 15 && count < 20) colorClass = "bg-orange-300";
     else if (count >= 20) colorClass = "bg-rose-300";
     const shapes = [];
-    if (count >= 5) { shapes.push(<div key="b" className={`h-3 w-4 rounded-sm ${colorClass}`} />); for(let i=0;i<count%5;i++) shapes.push(<div key={`r${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />); }
+    if (count >= 5) { shapes.push(<div key="big" className={`h-3 w-4 rounded-sm ${colorClass}`} />); for(let i=0;i<count%5;i++) shapes.push(<div key={`r${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />); }
     else { for(let i=0;i<count;i++) shapes.push(<div key={`s${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />); }
     return shapes;
   };
@@ -790,6 +778,39 @@ const App = () => {
       setPasswordError(true);
       setPasswordInput('');
     }
+  };
+
+  // ... (SuccessOverlay, StudentSubmitFab components - keep same) ...
+  const StudentSubmitFab = () => {
+    const count = Object.keys(draftVotes).length;
+    if (viewMode !== 'student' || hasSubmitted) return null;
+    return (
+      <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-10 fade-in duration-500 flex items-center gap-3">
+        {!currentVoter && (
+          <div className="bg-rose-500 text-white text-sm font-bold px-4 py-2 rounded-xl animate-bounce">
+            請先在右上方選擇您的座號！
+          </div>
+        )}
+        <button onClick={handleValidateAndSubmit} disabled={count === 0 || isSubmitting || !currentVoter} className={`flex items-center gap-2 px-6 py-4 rounded-full shadow-xl transition-all transform hover:scale-105 active:scale-95 ${count > 0 && !isSubmitting && currentVoter ? 'bg-gradient-to-r from-rose-400 to-orange-400 text-white hover:from-rose-500 hover:to-orange-500' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+          {isSubmitting ? <RefreshCw className="animate-spin" size={24} /> : <Send size={24} fill="currentColor" />}
+          <div className="flex flex-col items-start"><span className="text-sm font-bold leading-none">送出審慎的一票</span><span className="text-xs font-medium opacity-90 leading-none mt-1">已選 {count} 位候選人</span></div>
+        </button>
+      </div>
+    );
+  };
+  const SuccessOverlay = () => {
+    if (viewMode === 'student' && showSuccessModal) {
+      return (
+        <div className="fixed inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl border-4 border-teal-100 flex flex-col items-center animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-teal-100 rounded-full flex items-center justify-center mb-4 text-teal-500"><Check size={48} strokeWidth={3} /></div>
+            <h2 className="text-2xl font-bold text-slate-700 mb-2">投票已送出！</h2>
+            <p className="text-slate-500 font-medium">感謝您神聖的一票</p>
+          </div>
+        </div>
+      );
+    }
+    return null;
   };
 
   // Define filteredPositions for Main Render
@@ -1197,99 +1218,113 @@ const App = () => {
                 ? 'border-orange-400 ring-4 ring-orange-100 shadow-xl bg-orange-50' 
                 : voteableStyle;
 
-              const renderGroup = (candidates, rank, active, color) => {
-                   const effectiveActive = active && !isPositionFull;
-                   let bgClass, textClass, shadowClass;
-                   
-                   if (effectiveActive) {
-                      if (color === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
-                      else if (color === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
-                      else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
-                   } else {
-                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
-                   }
+              const renderPriorityGroup = (candidates, priorityRank, isActive, colorTheme) => {
+                let bgClass, textClass, shadowClass;
+                
+                // If position is full, visually gray out (but elected ones stay red)
+                const effectiveActive = isActive && !isPositionFull;
+                
+                if (effectiveActive) {
+                  if (colorTheme === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
+                  else if (colorTheme === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
+                  else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
+                } else {
+                  bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
+                }
 
-                   return (
-                      <div className={`pl-2 border-l-4 ${effectiveActive ? (color === 'red' ? 'border-rose-200' : color === 'orange' ? 'border-orange-200' : 'border-amber-200') : 'border-slate-100'}`}>
-                         <div className={`text-[10px] font-bold ${textClass} mb-1 flex justify-between`}>
-                            {rank === 1 ? '第一志願' : rank === 2 ? '第二志願' : '第三志願'}
-                            <span className={`${effectiveActive ? (color === 'red' ? 'bg-rose-50 text-rose-300' : color === 'orange' ? 'bg-orange-50 text-orange-300' : 'bg-amber-50 text-amber-300') : 'bg-slate-50 text-slate-300'} px-1.5 rounded-md`}>{candidates.length}</span>
-                         </div>
-                         <div className="flex flex-wrap gap-1.5">
-                            {candidates.length > 0 ? candidates.map((s, i) => {
-                               const key = `${code}_${s}`;
-                               const vCount = (voteRecords[key] || []).length;
-                               const isDrafted = draftVotes[code] === s;
-                               
-                               const selectedPos = electionState.selected?.[s];
-                               const isSelectedForThis = selectedPos === String(code);
-                               const isSelectedForOther = selectedPos && selectedPos !== String(code);
-                               
-                               // Interaction disabled if:
-                               // 1. Group inactive (limit reached) OR Position Full
-                               // 2. Teacher mode
-                               // 3. Candidate already selected (for this or other)
-                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
-                               
-                               // Style for selected candidate (This position)
-                               const selectedStyle = isSelectedForThis 
-                                 ? 'ring-0 shadow-sm' // Dark red, no ring
-                                 : '';
-                                 
-                               // Style for excluded candidate (Selected elsewhere)
-                               // Now same as inactive default + icon
-                               const excludedStyle = isSelectedForOther
-                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                 : '';
-                                 
-                               // Cursor logic
-                               const cursorClass = (isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : (isDisabled && viewMode === 'student' ? 'cursor-not-allowed' : 'cursor-pointer');
+                return (
+                  <div className={`pl-2 border-l-4 ${effectiveActive ? (colorTheme === 'red' ? 'border-rose-200' : colorTheme === 'orange' ? 'border-orange-200' : 'border-amber-200') : 'border-slate-100'}`}>
+                    <div className={`text-[10px] font-bold ${textClass} mb-1 flex justify-between`}>
+                      {priorityRank === 1 ? '第一志願' : priorityRank === 2 ? '第二志願' : '第三志願'}
+                      <span className={`${effectiveActive ? (colorTheme === 'red' ? 'bg-rose-50 text-rose-300' : colorTheme === 'orange' ? 'bg-orange-50 text-orange-300' : 'bg-amber-50 text-amber-300') : 'bg-slate-50 text-slate-300'} px-1.5 rounded-md`}>
+                        {candidates.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {candidates.length > 0 ? (
+                        candidates.map((s, i) => {
+                          const key = `${code}_${s}`;
+                          const vCount = (voteRecords[key] || []).length;
+                          const isDrafted = draftVotes[code] === s;
+                          
+                          const selectedPos = electionState.selected?.[s];
+                          const isSelectedForThis = selectedPos === String(code);
+                          const isSelectedForOther = selectedPos && selectedPos !== String(code);
+                          
+                          // Interaction disabled if:
+                          // 1. Group inactive (limit reached) OR Position Full
+                          // 2. Teacher mode
+                          // 3. Candidate already selected (for this or other)
+                          const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                          
+                          // Style for selected candidate (This position)
+                          const selectedStyle = isSelectedForThis 
+                            ? 'ring-0 shadow-sm' // Removed border, reduced padding logic in className
+                            : '';
+                            
+                          // Style for excluded candidate (Selected elsewhere)
+                          // Now same as inactive default + icon
+                          const excludedStyle = isSelectedForOther
+                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                            : '';
+                            
+                          // Cursor logic
+                          const cursorClass = (isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : (isDisabled && viewMode === 'student' ? 'cursor-not-allowed' : 'cursor-pointer');
 
-                               return (
-                                  <div key={i} className="flex items-center gap-1">
-                                     <button 
-                                       onClick={() => {
-                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
-                                          if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
-                                       }}
-                                       disabled={isDisabled && viewMode === 'student'} 
-                                       className={`
-                                          px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
-                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
-                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
-                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther && shadowClass}
-                                          ${selectedStyle}
-                                          ${excludedStyle}
-                                          ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
-                                          ${viewMode === 'student' && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
-                                          ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted 
-                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
-                                            : ''}
-                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
-                                          ${cursorClass}
-                                       `}
-                                       title={getStudentFullName(s)}
-                                     >
-                                        {/* 卜 Icon */}
-                                        {(isSelectedForThis || isSelectedForOther) && (
-                                           <span className={`rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border ${isSelectedForThis ? 'bg-red-600 text-white border-white' : 'bg-transparent text-slate-400 border-slate-300'}`}>卜</span>
-                                        )}
-                                        {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3}/>}
-                                        {getStudentNameLabel(s)}
-                                        {viewMode === 'student' && isDisabled && !isSelectedForThis && !isSelectedForOther && <div className="absolute inset-0 bg-white/50 rounded-xl cursor-not-allowed" />}
-                                     </button>
-                                     
-                                     {/* Teacher View OR Student View (Submitted): Show Votes */}
-                                     {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
-                                        <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
-                                     )}
-                                  </div>
-                               )
-                            }) : <span className="bg-slate-50 text-slate-300 px-2 py-1 rounded-lg text-xs font-bold w-full text-center border border-slate-100 border-dashed">無人選填</span>}
-                         </div>
-                      </div>
-                   )
+                          return (
+                            <div key={i} className="flex items-center gap-1">
+                              <button 
+                                onClick={() => {
+                                  if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
+                                  if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
+                                }}
+                                disabled={isDisabled && viewMode === 'student'} 
+                                className={`
+                                  px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
+                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
+                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
+                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther && shadowClass}
+                                  ${selectedStyle}
+                                  ${excludedStyle}
+                                  ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
+                                  ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
+                                  ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
+                                  ${isDrafted 
+                                    ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
+                                    : ''}
+                                  ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
+                                  ${cursorClass}
+                                `}
+                                title={getStudentFullName(s)}
+                              >
+                                {isSelectedForThis && (
+                                  <span className="bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border border-white">
+                                    卜
+                                  </span>
+                                )}
+                                {isSelectedForOther && (
+                                  <span className="text-slate-400 border border-slate-300 rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 bg-white">
+                                    卜
+                                  </span>
+                                )}
+                                {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3} />}
+                                {getStudentNameLabel(s)}
+                                {viewMode === 'student' && isDisabled && !isSelectedForThis && !isSelectedForOther && <div className="absolute inset-0 bg-white/50 rounded-xl cursor-not-allowed" />}
+                              </button>
+                              
+                              {/* Teacher View OR Student View (Submitted): Show Votes */}
+                              {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
+                                <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <span className="bg-slate-50 text-slate-300 px-2 py-1 rounded-lg text-xs font-bold w-full text-center border border-slate-100 border-dashed">無人選填</span>
+                      )}
+                    </div>
+                  </div>
+                );
               };
 
               return (
