@@ -4,7 +4,8 @@ import {
   User, FileText, X, Eye, Table, BarChart3, Heart, Copy, Check, ArrowRight, Edit3, 
   Plus, Trash2, ChevronLeft, ChevronRight, Shield, GraduationCap, LayoutDashboard, 
   ThumbsUp, Vote, Send, Users, Settings, ListOrdered, Lock, Unlock, Languages, Ban, 
-  Zap, HelpCircle, AlertCircle, Download, Upload, Database, LogOut, LogIn, Activity
+  Zap, HelpCircle, AlertCircle, Download, Upload, Database, LogOut, LogIn, Activity,
+  AlertOctagon
 } from 'lucide-react';
 
 // Firebase imports
@@ -43,7 +44,6 @@ const YOUR_FIREBASE_CONFIG = {
 
 let app, auth, db;
 try {
-  // 優先嘗試使用環境變數 (預覽環境)，若無則使用本地設定
   const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : YOUR_FIREBASE_CONFIG;
   app = initializeApp(config);
   auth = getAuth(app);
@@ -150,6 +150,7 @@ const App = () => {
   const [clientIP, setClientIP] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [loginLogs, setLoginLogs] = useState([]);
+  const [pendingLoginIp, setPendingLoginIp] = useState(''); // Store IP for force login
 
   // Editor State
   const [visualChoices, setVisualChoices] = useState([]); 
@@ -174,6 +175,12 @@ const App = () => {
   useEffect(() => {
     // Generate session ID
     setSessionId(Math.random().toString(36).substring(2, 15));
+    
+    // Fetch IP (Initial) - Fail safe
+    fetch('https://api.ipify.org?format=json')
+      .then(res => res.json())
+      .then(data => setClientIP(data.ip))
+      .catch(err => console.warn("Initial IP Fetch Error:", err));
   }, []);
 
   // Initialize Auth Listener
@@ -213,27 +220,24 @@ const App = () => {
   useEffect(() => {
     if (!db || !currentUser) return;
     
-    // Listen to Vote Data
     const votesRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
     const unsubVotes = onSnapshot(votesRef, (docSnap) => {
       if (docSnap.exists()) setVoteRecords(docSnap.data());
       else setVoteRecords({});
     }, err => console.log("Votes sync pending..."));
 
-    // Listen to Election State
     const electionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'electionState', 'global');
     const unsubElection = onSnapshot(electionRef, (docSnap) => {
       if (docSnap.exists()) setElectionState(docSnap.data());
       else setElectionState({ selected: {} });
     });
 
-    // Listen to Login Logs (Teacher Only)
     let unsubLogs = () => {};
     if (viewMode === 'teacher') {
       const logsQuery = query(
         collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs'),
         orderBy('timestamp', 'desc'),
-        limit(40) // Show last 40 records as requested
+        limit(40)
       );
       unsubLogs = onSnapshot(logsQuery, (snapshot) => {
         const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -255,6 +259,7 @@ const App = () => {
       const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          // If the session ID in DB doesn't match MY session ID, I've been kicked
           if (data.sessionId && data.sessionId !== sessionId) {
             alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
             handleLogout();
@@ -299,33 +304,37 @@ const App = () => {
     }
     
     setLoading(true);
+    setLoginError('');
     
     try {
-      // 1. Fetch IP on demand (Student clicks arrow)
+      // 1. Fetch IP on demand
       let currentIp = 'Unknown';
       try {
         const ipRes = await fetch('https://api.ipify.org?format=json');
         const ipData = await ipRes.json();
         currentIp = ipData.ip;
-        setClientIP(currentIp); // Update state
+        setClientIP(currentIp); 
       } catch (err) {
         console.warn("IP Fetch Failed", err);
       }
 
+      // 2. Check Session Conflict
       const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', selectedLoginSeat);
       const sessionSnap = await getDoc(sessionRef);
 
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
-        if (true) { 
-           setConflictIP(sessionData.ip || 'Unknown');
-           // setPendingLoginIp(currentIp); 
-           setShowForceLoginModal(true); 
-           setLoading(false);
-           return;
-        }
+        
+        // 只要有 session 紀錄，就視為衝突 (嚴格模式)
+        // 除非 session ID 相同 (自己重新整理，這種情況通常不會進入此函式，因為會直接 auto login)
+        setConflictIP(sessionData.ip || 'Unknown');
+        setPendingLoginIp(currentIp); // Store for later
+        setShowForceLoginModal(true); 
+        setLoading(false);
+        return;
       }
 
+      // No conflict, proceed
       await performLogin(selectedLoginSeat, "登入成功", currentIp);
 
     } catch (error) {
@@ -360,12 +369,46 @@ const App = () => {
     }
   };
 
+  // 清除舊投票紀錄 (Wipe)
+  const clearPreviousVotes = async (seatNo) => {
+    if (!db) return;
+    const docRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
+    try {
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const updates = {};
+        let needsUpdate = false;
+        
+        // Iterate all positions and candidates
+        Object.keys(data).forEach(key => {
+          if (Array.isArray(data[key]) && data[key].includes(seatNo)) {
+            // Remove this seatNo from the array
+            updates[key] = data[key].filter(id => id !== seatNo);
+            needsUpdate = true;
+          }
+        });
+        
+        if (needsUpdate) {
+          await updateDoc(docRef, updates);
+        }
+      }
+    } catch (e) {
+      console.error("Error clearing previous votes:", e);
+    }
+  };
+
   const handleForceLogin = async () => {
     if (forceLoginPassword !== FORCE_LOGIN_PASSWORD) {
       alert("密碼錯誤！請通知老師。");
       return;
     }
-    await performLogin(selectedLoginSeat, "發現重複登入，已強制登出舊連線", clientIP);
+    
+    // 1. Wipe previous votes (Override)
+    await clearPreviousVotes(selectedLoginSeat);
+
+    // 2. Perform Login (Kick old session)
+    await performLogin(selectedLoginSeat, "發現重複登入，老師已強制重置並覆寫投票", pendingLoginIp);
   };
 
   const handleLogout = async () => {
@@ -566,7 +609,6 @@ const App = () => {
         await setDoc(docRef, updates, { merge: true });
       }
       
-      // On submit, fetch IP again for log
       let currentIp = 'Unknown';
       try {
         const ipRes = await fetch('https://api.ipify.org?format=json');
@@ -799,6 +841,7 @@ const App = () => {
         setViewMode('teacher');
         setShowPasswordModal(false);
         setFailedAttempts(0); 
+        // Reset student voting state when entering teacher mode
         setDraftVotes({});
         setCurrentVoter("");
         setHasSubmitted(false);
@@ -835,14 +878,19 @@ const App = () => {
     return (
        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
           <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full border-4 border-rose-200 p-8 flex flex-col items-center">
-             <div className="bg-rose-100 p-4 rounded-full mb-4 text-rose-500"><AlertTriangle size={32} /></div>
-             <h3 className="text-xl font-bold text-slate-700 mb-2">重複登入偵測</h3>
-             <p className="text-slate-400 text-sm mb-2 text-center">座號 <span className="font-bold text-slate-600">{selectedLoginSeat}</span> 已在其他裝置 ({conflictIP}) 登入。</p>
-             <p className="text-rose-400 text-xs font-bold mb-6 text-center">若要強制登入，請輸入驗證密碼</p>
-             <input type="password" autoFocus className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-center font-bold text-slate-700 outline-none mb-4" placeholder="請輸入密碼..." value={forceLoginPassword} onChange={e => setForceLoginPassword(e.target.value)}/>
+             <div className="bg-rose-100 p-4 rounded-full mb-4 text-rose-500"><AlertOctagon size={40} /></div>
+             <h3 className="text-xl font-bold text-slate-700 mb-2">⚠️ 重複登入衝突</h3>
+             <p className="text-slate-500 text-sm mb-4 text-center font-medium">
+               座號 <span className="font-bold text-indigo-600 text-lg">{selectedLoginSeat}</span> 目前已在其他裝置上使用中。<br/>
+               (佔用者 IP: <span className="font-mono bg-slate-100 px-1 rounded">{conflictIP}</span>)
+             </p>
+             <p className="text-rose-500 text-xs font-bold mb-6 text-center bg-rose-50 p-3 rounded-xl border border-rose-100">
+               請通知老師處理！<br/>老師輸入管理密碼後可重置此身份。
+             </p>
+             <input type="password" autoFocus className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-center font-bold text-slate-700 outline-none mb-4" placeholder="請老師輸入管理密碼..." value={forceLoginPassword} onChange={e => setForceLoginPassword(e.target.value)}/>
              <div className="flex gap-3 w-full">
-                <button onClick={() => { setShowForceLoginModal(false); setForceLoginPassword(''); }} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-bold">取消</button>
-                <button onClick={handleForceLogin} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 shadow-lg shadow-rose-200">強制登入</button>
+                <button onClick={() => { setShowForceLoginModal(false); setForceLoginPassword(''); }} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors">取消</button>
+                <button onClick={handleForceLogin} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 shadow-lg shadow-rose-200 transition-colors">強制登入並重置</button>
              </div>
           </div>
        </div>
@@ -931,6 +979,8 @@ const App = () => {
             </div>
           </div>
           {loginError && <div className="mt-4 bg-rose-50 text-rose-500 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"><AlertTriangle size={16} />{loginError}</div>}
+          
+          <ForceLoginModal /> {/* Render ForceLoginModal here too in case conflict happens during login check */}
         </div>
       </div>
     );
@@ -946,7 +996,8 @@ const App = () => {
         
         <SuccessOverlay />
         <StudentSubmitFab />
-        <ForceLoginModal />
+        {/* Only show force login modal if we are NOT on login screen (handled above) or if it's triggered during session */}
+        {viewMode !== 'login' && <ForceLoginModal />} 
         
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImportData} />
 
@@ -1000,10 +1051,10 @@ const App = () => {
                     <input type="text" placeholder="搜尋..." className="w-full bg-slate-50 border-2 border-slate-100 rounded-full py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-indigo-200 outline-none" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
                  </div>
                  {viewMode === 'student' && !hasSubmitted && (
-                   <div className="flex items-center gap-2 bg-white border-2 border-indigo-200 rounded-full px-3 py-1.5 ml-auto md:ml-0 shadow-sm">
+                   <div className="flex items-center gap-2 bg-white border-2 border-indigo-200 rounded-full px-3 py-1.5 ml-auto md:ml-0 shadow-sm w-32 justify-center">
                      <User size={16} className="text-indigo-400" />
                      {/* Lock seat selector to authenticated user role if student */}
-                     <span className="text-sm font-bold text-slate-600 w-24 text-center inline-block">{currentVoter} {getStudentNameLabel(currentVoter)}</span>
+                     <span className="text-sm font-bold text-slate-600">{currentVoter} {getStudentNameLabel(currentVoter)}</span>
                    </div>
                  )}
                  {viewMode === 'teacher' && <button onClick={()=>setShowMapModal(true)} className="flex gap-1 bg-white border-2 border-slate-200 px-4 py-2 rounded-full text-sm font-bold hover:bg-slate-50 whitespace-nowrap shadow-sm"><Table size={16}/><span className="hidden sm:inline">代碼表</span></button>}
