@@ -48,15 +48,11 @@ try {
 // ------------------------------------------------
 
 // --- 用戶身份與 Email 對照表 (老師專用) ---
-// 學生部分已改為「姓名自動比對」，此處只需填寫老師的 Email
 const USER_MAPPING = {
-  // ★★★ 老師請在此填入您的 Gmail ★★★
   "tea-0180@kfjh.tc.edu.tw": "TEACHER",
   "susi@st.tc.edu.tw": "TEACHER",
 };
 
-// 為了方便您測試，這裡設一個「測試模式」
-// 正式上線時建議將 allowAnyEmail 設為 false
 const TEST_CONFIG = {
   allowAnyEmail: true,       
   defaultTestRole: "01"      
@@ -647,6 +643,7 @@ const App = () => {
     }
   };
 
+  // ... (SuccessOverlay, StudentSubmitFab components - keep same) ...
   const StudentSubmitFab = () => {
     const count = Object.keys(draftVotes).length;
     if (viewMode !== 'student' || hasSubmitted) return null;
@@ -678,6 +675,11 @@ const App = () => {
     }
     return null;
   };
+
+  // Define filteredPositions BEFORE usage
+  const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
+    name.includes(searchTerm) || code.includes(searchTerm)
+  );
 
   // --- LOGIN PAGE RENDER ---
   if (viewMode === 'login' || !currentUser) {
@@ -983,168 +985,114 @@ const App = () => {
               const p1Candidates = statistics[code]?.[1] || [];
               const p2Candidates = statistics[code]?.[2] || [];
               const p3Candidates = statistics[code]?.[3] || [];
-
               const p1Count = p1Candidates.length;
               const p2Count = p2Candidates.length;
-              
               const isP2Active = p1Count < candidateLimit;
               const isP3Active = (p1Count + p2Count) < candidateLimit;
-
-              // Check if position is "Full" (elected count >= quota)
+              
               const codeStr = String(code);
               const quota = (codeStr === '1' || codeStr === '2') ? 1 : 2;
               let electedCount = 0;
-              Object.values(electionState.selected || {}).forEach(pos => {
-                if (pos === codeStr) electedCount++;
-              });
+              Object.values(electionState.selected || {}).forEach(pos => { if (pos === codeStr) electedCount++; });
               const isPositionFull = electedCount >= quota;
 
-              // Card styling logic
               const isMissingHighlight = viewMode === 'student' && missingCodes.includes(String(code));
-              
-              // Check if student can vote here: Not full, has candidates
               const hasCandidates = p1Candidates.length > 0 || (isP2Active && p2Candidates.length > 0) || (isP3Active && p3Candidates.length > 0);
               const isVoteable = !isPositionFull && hasCandidates;
               
-              // Student View Highlight for Voteable Cards
               const voteableStyle = viewMode === 'student' && isVoteable 
                 ? 'border-indigo-300 shadow-indigo-100 shadow-lg bg-sky-50' 
                 : 'border-slate-50 bg-white';
-              
               const borderClass = isMissingHighlight 
                 ? 'border-orange-400 ring-4 ring-orange-100 shadow-xl bg-orange-50' 
                 : voteableStyle;
 
-              const renderPriorityGroup = (candidates, priorityRank, isActive, colorTheme) => {
-                let bgClass, textClass, shadowClass;
-                
-                // If position is full, visually gray out (but elected ones stay red)
-                const effectiveActive = isActive && !isPositionFull;
-                
-                if (effectiveActive) {
-                  if (colorTheme === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
-                  else if (colorTheme === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
-                  else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
-                } else {
-                  bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
-                }
+              const renderGroup = (candidates, rank, active, color) => {
+                   const effectiveActive = active && !isPositionFull;
+                   let bgClass, textClass;
+                   if (effectiveActive) {
+                      if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; }
+                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass = 'text-orange-400'; }
+                      else { bgClass = 'bg-amber-300'; textClass = 'text-amber-400'; }
+                   } else {
+                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400';
+                   }
 
-                return (
-                  <div className={`pl-2 border-l-4 ${effectiveActive ? (colorTheme === 'red' ? 'border-rose-200' : colorTheme === 'orange' ? 'border-orange-200' : 'border-amber-200') : 'border-slate-100'}`}>
-                    <div className={`text-[10px] font-bold ${textClass} mb-1 flex justify-between`}>
-                      {priorityRank === 1 ? '第一志願' : priorityRank === 2 ? '第二志願' : '第三志願'}
-                      <span className={`${effectiveActive ? (colorTheme === 'red' ? 'bg-rose-50 text-rose-300' : colorTheme === 'orange' ? 'bg-orange-50 text-orange-300' : 'bg-amber-50 text-amber-300') : 'bg-slate-50 text-slate-300'} px-1.5 rounded-md`}>
-                        {candidates.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {candidates.length > 0 ? (
-                        candidates.map((s, i) => {
-                          const key = `${code}_${s}`;
-                          const vCount = (voteRecords[key] || []).length;
-                          const isDrafted = draftVotes[code] === s;
-                          
-                          const selectedPos = electionState.selected?.[s];
-                          const isSelectedForThis = selectedPos === String(code);
-                          const isSelectedForOther = selectedPos && selectedPos !== String(code);
-                          
-                          // Interaction disabled if:
-                          // 1. Group inactive (limit reached) OR Position Full
-                          // 2. Teacher mode
-                          // 3. Candidate already selected (for this or other)
-                          const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
-                          
-                          // Style for selected candidate (This position)
-                          const selectedStyle = isSelectedForThis 
-                            ? 'bg-red-800 text-white shadow-sm ring-0' // Dark red, no ring
-                            : '';
-                            
-                          // Style for excluded candidate (Selected elsewhere)
-                          // Now same as inactive default + icon
-                          const excludedStyle = isSelectedForOther
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                            : '';
-                            
-                          // Cursor logic
-                          const cursorClass = (isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : (isDisabled && viewMode === 'student' ? 'cursor-not-allowed' : 'cursor-pointer');
+                   return (
+                      <div className={`pl-2 border-l-4 ${effectiveActive ? (color === 'red' ? 'border-rose-200' : color === 'orange' ? 'border-orange-200' : 'border-amber-200') : 'border-slate-100'}`}>
+                         <div className={`text-[10px] font-bold ${textClass} mb-1 flex justify-between`}>
+                            {rank === 1 ? '第一志願' : rank === 2 ? '第二志願' : '第三志願'}
+                            <span className={`${effectiveActive ? (color === 'red' ? 'bg-rose-50 text-rose-300' : color === 'orange' ? 'bg-orange-50 text-orange-300' : 'bg-amber-50 text-amber-300') : 'bg-slate-50 text-slate-300'} px-1.5 rounded-md`}>{candidates.length}</span>
+                         </div>
+                         <div className="flex flex-wrap gap-1.5">
+                            {candidates.length > 0 ? candidates.map((s, i) => {
+                               const key = `${code}_${s}`;
+                               const vCount = (voteRecords[key] || []).length;
+                               const isDrafted = draftVotes[code] === s;
+                               const selectedPos = electionState.selected?.[s];
+                               const isSelectedForThis = selectedPos === String(code);
+                               const isSelectedForOther = selectedPos && selectedPos !== String(code);
+                               
+                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               
+                               const selectedStyle = isSelectedForThis ? 'bg-red-800 text-white ring-0 shadow-sm' : '';
+                               const excludedStyle = isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : '';
 
-                          return (
-                            <div key={i} className="flex items-center gap-1">
-                              <button 
-                                onClick={() => {
-                                  if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
-                                  if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
-                                }}
-                                disabled={isDisabled && viewMode === 'student'} 
-                                className={`
-                                  px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
-                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
-                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
-                                  ${effectiveActive && !isSelectedForThis && !isSelectedForOther && shadowClass}
-                                  ${selectedStyle}
-                                  ${excludedStyle}
-                                  ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
-                                  ${viewMode === 'student' && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
-                                  ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                  ${isDrafted 
-                                    ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
-                                    : ''}
-                                  ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
-                                  ${cursorClass}
-                                `}
-                                title={getStudentFullName(s)}
-                              >
-                                {isSelectedForThis && (
-                                  <span className="bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border border-white">
-                                    卜
-                                  </span>
-                                )}
-                                {isSelectedForOther && (
-                                  <span className="text-slate-400 border border-slate-300 rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 bg-white">
-                                    卜
-                                  </span>
-                                )}
-                                {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3} />}
-                                {getStudentNameLabel(s)}
-                                {viewMode === 'student' && isDisabled && !isSelectedForThis && !isSelectedForOther && <div className="absolute inset-0 bg-white/50 rounded-xl cursor-not-allowed" />}
-                              </button>
-                              
-                              {/* Teacher View OR Student View (Submitted): Show Votes */}
-                              {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
-                                <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
-                              )}
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <span className="bg-slate-50 text-slate-300 px-2 py-1 rounded-lg text-xs font-bold w-full text-center border border-slate-100 border-dashed">無人選填</span>
-                      )}
-                    </div>
-                  </div>
-                );
+                               return (
+                                  <div key={i} className="flex items-center gap-1">
+                                     <button 
+                                       onClick={() => {
+                                          if (viewMode === 'student' && isActive && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
+                                       }}
+                                       disabled={isDisabled && viewMode === 'student'}
+                                       className={`
+                                          px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
+                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
+                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
+                                          ${selectedStyle}
+                                          ${excludedStyle}
+                                          ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
+                                          ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
+                                          ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
+                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
+                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
+                                       `}
+                                       title={getStudentFullName(s)}
+                                     >
+                                        {(isSelectedForThis || isSelectedForOther) && (
+                                           <span className={`rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border ${isSelectedForThis ? 'bg-red-600 text-white border-white' : 'bg-transparent text-slate-400 border-slate-300'}`}>卜</span>
+                                        )}
+                                        {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3}/>}
+                                        {getStudentNameLabel(s)}
+                                     </button>
+                                     {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
+                                        <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
+                                     )}
+                                  </div>
+                               )
+                            }) : <span className="bg-slate-50 text-slate-300 px-2 py-1 rounded-lg text-xs font-bold w-full text-center border border-slate-100 border-dashed">無人選填</span>}
+                         </div>
+                      </div>
+                   )
               };
 
               return (
-              <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
-                <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
-                  <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
-                    <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
-                    {name}
-                    {isPositionFull && (
-                      <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">
-                        滿
-                      </span>
-                    )}
-                  </h3>
-                </div>
-                
-                <div className="p-3 space-y-3 flex-1">
-                  {renderPriorityGroup(p1Candidates, 1, true, 'red')}
-                  {renderPriorityGroup(p2Candidates, 2, isP2Active, 'orange')}
-                  {renderPriorityGroup(p3Candidates, 3, isP3Active, 'yellow')}
-                </div>
-              </div>
-            );
+                 <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
+                    <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
+                       <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                          <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
+                          {name}
+                          {isPositionFull && <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">滿</span>}
+                       </h3>
+                    </div>
+                    <div className="p-3 space-y-3 flex-1">
+                       {renderGroup(p1Candidates, 1, true, 'red')}
+                       {renderGroup(p2Candidates, 2, isP2Active, 'orange')}
+                       {renderGroup(p3Candidates, 3, isP3Active, 'yellow')}
+                    </div>
+                 </div>
+              )
             })}
           </div>
         </main>
