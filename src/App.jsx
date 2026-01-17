@@ -26,8 +26,6 @@ import {
 const APP_ID = 'cadet-voting-system';
 
 // ★★★ 請在此處填入您從 Firebase Console 取得的設定 ★★★
-// 為了避免編譯錯誤，這裡先使用字串佔位符。
-// 下載後，請將這些字串替換為您的真實 Firebase Config。
 const YOUR_FIREBASE_CONFIG = {
   apiKey: "AIzaSyAam5iqLJDb4TQJ_KXMcXpJdbd0leNNCE0",
   authDomain: "vote-9468a.firebaseapp.com",
@@ -39,7 +37,7 @@ const YOUR_FIREBASE_CONFIG = {
 
 let app, auth, db;
 try {
-  // 優先嘗試使用環境變數 (線上預覽環境專用)，若無則使用上方的設定 (本地開發/Netlify)
+  // 優先嘗試使用環境變數 (預覽環境)，若無則使用本地設定
   const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : YOUR_FIREBASE_CONFIG;
   app = initializeApp(config);
   auth = getAuth(app);
@@ -1100,6 +1098,4 @@ const App = () => {
   );
 };
 
-
 export default App;
-
