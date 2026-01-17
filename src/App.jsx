@@ -4,7 +4,7 @@ import {
   User, FileText, X, Eye, Table, BarChart3, Heart, Copy, Check, ArrowRight, Edit3, 
   Plus, Trash2, ChevronLeft, ChevronRight, Shield, GraduationCap, LayoutDashboard, 
   ThumbsUp, Vote, Send, Users, Settings, ListOrdered, Lock, Unlock, Languages, Ban, 
-  Zap, HelpCircle, AlertCircle, Download, Upload, Database, LogOut, LogIn
+  Zap, HelpCircle, AlertCircle, Download, Upload, Database, LogOut, LogIn, Activity
 } from 'lucide-react';
 
 // Firebase imports
@@ -19,7 +19,13 @@ import {
   increment, 
   getDoc,
   collection,
-  arrayUnion
+  arrayUnion,
+  deleteDoc,
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 
 // --- Firebase Configuration & Initialization ---
@@ -53,13 +59,14 @@ const USER_MAPPING = {
   "susi@st.tc.edu.tw": "TEACHER",
 };
 
+// 測試模式設定
 const TEST_CONFIG = {
   allowAnyEmail: true,       
   defaultTestRole: "01"      
 };
 
 // 學生資料庫
-const RAW_STUDENT_DATA = "90428郭向崴80501楊子青80502魏寧妤80503吳紫妍80504張子琦80505林愷昕80506徐莉婕80507江凱璇80508黃喜苓80509譚日晰80510魏千紜80511賴品汝80512林芊亞80513江嘉純80514王潔心80515林暐倫80516温家亮80517蘇楦紘80518趙毅亮80519王長綸80520周楹家80521李至昇80522廖雲旭80523林秉昇80524邱子瀚80525陳奕銨80526林汶謙80527賴雨陞80528姚天裕80529施澄昊";
+const RAW_STUDENT_DATA = "80501楊子青80502魏寧妤80503吳紫妍80504張子琦80505林愷昕80506徐莉婕80507江凱璇80508黃喜苓80509譚日晰80510魏千紜80511賴品汝80512林芊亞80513江嘉純80514王潔心80515林暐倫80516温家亮80517蘇楦紘80518趙毅亮80519王長綸80520周楹家80521李至昇80522廖雲旭80523林秉昇80524邱子瀚80525陳奕銨80526林汶謙80527賴雨陞80528姚天裕80529施澄昊";
 
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQQ3akUNWUgfO5l4ckzMjGjKcqez-pJ3s6GgivjZ9TFS8sQyHAt7Ou9iztbjd_PLvFdzxXCnB_tZhDk/pub?gid=1923253012&single=true&output=csv";
 
@@ -73,6 +80,8 @@ const CHALLENGES = [
   { q: '桌子', a: 'dGFibGU=' }, { q: '椅子', a: 'Y2hhaXI=' }, { q: '鳥', a: 'YmlyZA==' },
   { q: '魚', a: 'ZmlzaA==' }, { q: '老虎', a: 'dGlnZXI=' }
 ];
+
+const FORCE_LOGIN_PASSWORD = "3939889";
 
 const parseStudentData = () => {
   const seatMap = {};
@@ -98,10 +107,14 @@ const POSITION_MAP = {
 };
 
 const App = () => {
+  // --- States ---
   const [viewMode, setViewMode] = useState('login');
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);       
   const [loginError, setLoginError] = useState('');
+  
+  // *** FIX: Add missing state for selectedLoginSeat ***
+  const [selectedLoginSeat, setSelectedLoginSeat] = useState("");
 
   const [rawRows, setRawRows] = useState([]); 
   const [statistics, setStatistics] = useState({});
@@ -115,75 +128,169 @@ const App = () => {
   const [detectedLatestDate, setDetectedLatestDate] = useState(null);
   const [filteredCount, setFilteredCount] = useState(0);
   const [candidateLimit, setCandidateLimit] = useState(3);
+  
+  // UI Modals
   const [editingStudent, setEditingStudent] = useState(null);
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [viewingVoters, setViewingVoters] = useState(null); 
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showIncompleteModal, setShowIncompleteModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showForceLoginModal, setShowForceLoginModal] = useState(false);
+
+  // Password Challenge
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [currentChallenge, setCurrentChallenge] = useState(null); 
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [isLockedOut, setIsLockedOut] = useState(false);
-  const [viewingVoters, setViewingVoters] = useState(null); 
+
+  // Force Login State
+  const [forceLoginPassword, setForceLoginPassword] = useState('');
+  const [conflictIP, setConflictIP] = useState('');
+  const [clientIP, setClientIP] = useState('');
+  const [sessionId, setSessionId] = useState('');
+  const [loginLogs, setLoginLogs] = useState([]);
+
+  // Editor State
   const [visualChoices, setVisualChoices] = useState([]); 
   const [generatedString, setGeneratedString] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // Firebase Data
   const [voteRecords, setVoteRecords] = useState({}); 
   const [electionState, setElectionState] = useState({ selected: {} }); 
+  
+  // Voting State
   const [draftVotes, setDraftVotes] = useState({}); 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [currentVoter, setCurrentVoter] = useState(""); 
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [showIncompleteModal, setShowIncompleteModal] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [missingPositions, setMissingPositions] = useState([]); 
   const [missingCodes, setMissingCodes] = useState([]); 
+  
   const fileInputRef = useRef(null);
+
+  // --- Initial Setup ---
+  useEffect(() => {
+    fetch('https://api.ipify.org?format=json')
+      .then(res => res.json())
+      .then(data => setClientIP(data.ip))
+      .catch(err => console.error("IP Fetch Error:", err));
+      
+    // Generate a session ID for this browser tab instance
+    setSessionId(Math.random().toString(36).substring(2, 15));
+  }, []);
 
   // Initialize Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        const email = user.email;
-        const displayName = user.displayName || ""; 
+        // Logged in
+        setCurrentUser(user);
         
-        let role = null;
-        let mode = 'login';
-
-        if (USER_MAPPING[email] === 'TEACHER') {
-          role = 'TEACHER';
-          mode = 'teacher';
-        } else {
-          if (STUDENT_FULL_ID_MAP[displayName]) {
-            role = STUDENT_FULL_ID_MAP[displayName]; 
-            mode = 'student';
-          } else if (TEST_CONFIG.allowAnyEmail) {
-            role = TEST_CONFIG.defaultTestRole;
-            mode = role === 'TEACHER' ? 'teacher' : 'student';
-          }
-        }
-
-        if (role) {
-          setCurrentUser(user);
-          setUserRole(role);
-          setViewMode(mode);
+        // 檢查是否為老師
+        const email = user.email;
+        if (email && USER_MAPPING[email] === 'TEACHER') {
+          setUserRole('TEACHER');
+          setViewMode('teacher');
           setLoginError('');
-          if (mode === 'student') {
-             setCurrentVoter(role);
-          }
-          fetchData(); 
+          fetchData();
         } else {
-          setLoginError(`登入失敗：您的名稱「${displayName}」不在班級名單中，請確認使用的是學校帳號。`);
-          signOut(auth);
+          // 如果不是老師，且目前是匿名登入狀態，檢查是否有指定的學生身份
+          if (user.isAnonymous && userRole && userRole !== 'TEACHER') {
+             // 這是學生透過選單登入的流程，保持狀態
+             setViewMode('student');
+             fetchData();
+          } else if (!user.isAnonymous) {
+             // 誤用 Google 登入但非老師
+             setLoginError('非授權的教師帳號。學生請使用下方「學生專用通道」登入。');
+             signOut(auth);
+          }
         }
       } else {
+        // Not logged in
         setCurrentUser(null);
-        setUserRole(null);
-        setViewMode('login');
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [userRole]);
+
+  // --- Firebase Subscriptions ---
+  useEffect(() => {
+    if (!db || !currentUser) return;
+    
+    // Listen to Vote Data
+    const votesRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
+    const unsubVotes = onSnapshot(votesRef, (docSnap) => {
+      if (docSnap.exists()) setVoteRecords(docSnap.data());
+      else setVoteRecords({});
+    }, err => console.log("Votes sync pending..."));
+
+    // Listen to Election State
+    const electionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'electionState', 'global');
+    const unsubElection = onSnapshot(electionRef, (docSnap) => {
+      if (docSnap.exists()) setElectionState(docSnap.data());
+      else setElectionState({ selected: {} });
+    });
+
+    // Listen to Login Logs (Teacher Only)
+    let unsubLogs = () => {};
+    if (viewMode === 'teacher') {
+      const logsQuery = query(
+        collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs', 'records'),
+        orderBy('timestamp', 'desc'),
+        limit(50)
+      );
+      unsubLogs = onSnapshot(logsQuery, (snapshot) => {
+        const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        setLoginLogs(logs);
+      });
+    }
+
+    return () => {
+      unsubVotes();
+      unsubElection();
+      unsubLogs();
+    };
+  }, [currentUser, viewMode]);
+
+  // --- Session Monitor ---
+  useEffect(() => {
+    if (viewMode === 'student' && currentVoter && db) {
+      // Listen to MY active session
+      const sessionDocRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
+      const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          // If the session ID in DB doesn't match MY session ID, I've been kicked
+          if (data.sessionId && data.sessionId !== sessionId) {
+            alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
+            handleLogout();
+          }
+        }
+      });
+      return () => unsubSession();
+    }
+  }, [viewMode, currentVoter, sessionId, db]);
+
+  // --- Logic Handlers ---
+
+  const logActivity = async (seatNo, message) => {
+    if (!db) return;
+    try {
+      await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs', 'records'), {
+        timestamp: serverTimestamp(),
+        seatNo: seatNo,
+        name: getStudentNameLabel(seatNo),
+        ip: clientIP || 'Unknown',
+        message: message
+      });
+    } catch (e) {
+      console.error("Log error", e);
+    }
+  };
 
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -191,37 +298,92 @@ const App = () => {
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error("Login Failed", error);
-      setLoginError('登入失敗，請重試。');
+      setLoginError('Google 登入失敗，請重試。');
     }
   };
 
-  const handleLogout = () => {
+  // Student Direct Login with Conflict Check
+  const handleStudentDirectLogin = async () => {
+    if (!selectedLoginSeat) {
+      setLoginError('請先選擇您的座號！');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', selectedLoginSeat);
+      const sessionSnap = await getDoc(sessionRef);
+
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
+        if (true) { 
+           setConflictIP(sessionData.ip || 'Unknown');
+           setShowForceLoginModal(true); 
+           setLoading(false);
+           return;
+        }
+      }
+
+      await performLogin(selectedLoginSeat, "登入成功");
+
+    } catch (error) {
+      console.error("Check Session Failed", error);
+      setLoginError('無法驗證登入狀態，請檢查網路。');
+      setLoading(false);
+    }
+  };
+
+  const performLogin = async (seatNo, logMessage) => {
+    try {
+       setUserRole(seatNo);
+       setCurrentVoter(seatNo);
+
+       // Update Active Session
+       const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', seatNo);
+       await setDoc(sessionRef, {
+         ip: clientIP,
+         sessionId: sessionId,
+         timestamp: serverTimestamp()
+       });
+
+       await logActivity(seatNo, logMessage);
+       await signInAnonymously(auth);
+       
+       setShowForceLoginModal(false);
+       setForceLoginPassword('');
+    } catch (e) {
+       console.error("Login Error", e);
+       setLoginError("登入過程發生錯誤");
+    } finally {
+       setLoading(false);
+    }
+  };
+
+  const handleForceLogin = async () => {
+    if (forceLoginPassword !== FORCE_LOGIN_PASSWORD) {
+      alert("密碼錯誤！請通知老師。");
+      return;
+    }
+    await performLogin(selectedLoginSeat, "發現重複登入，已強制登出舊連線");
+  };
+
+  const handleLogout = async () => {
+    if (currentVoter && db) {
+      try {
+        const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
+        await deleteDoc(sessionRef); 
+      } catch (e) { /* ignore */ }
+    }
+    
     signOut(auth);
     setDraftVotes({}); 
     setHasSubmitted(false);
     setCurrentVoter(""); 
+    setUserRole(null);
+    setViewMode('login');
+    setSelectedLoginSeat(""); 
   };
-
-  useEffect(() => {
-    if (!db || !currentUser) return;
-    
-    const votesRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'voteDetails', 'global');
-    const unsubVotes = onSnapshot(votesRef, (docSnap) => {
-      if (docSnap.exists()) setVoteRecords(docSnap.data());
-      else setVoteRecords({});
-    }, (error) => console.log("Waiting for permissions..."));
-
-    const electionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'electionState', 'global');
-    const unsubElection = onSnapshot(electionRef, (docSnap) => {
-      if (docSnap.exists()) setElectionState(docSnap.data());
-      else setElectionState({ selected: {} });
-    });
-
-    return () => {
-      unsubVotes();
-      unsubElection();
-    };
-  }, [currentUser]);
 
   const handleExportData = () => {
     const dataToExport = {
@@ -276,14 +438,21 @@ const App = () => {
       const quota = (code === '1' || code === '2') ? 1 : 2; 
       const p1Candidates = statistics[code]?.[1] || [];
       const availableCandidates = p1Candidates.filter(seat => !newSelected[seat]);
+      
       if (availableCandidates.length > 0 && availableCandidates.length <= quota) {
-        availableCandidates.forEach(seat => { newSelected[seat] = code; });
+        availableCandidates.forEach(seat => {
+          newSelected[seat] = code;
+        });
       }
     });
+
     try {
       await setDoc(electionRef, { selected: newSelected }, { merge: true });
       alert("第一輪自動錄取完成！");
-    } catch (e) { alert("自動錄取失敗"); }
+    } catch (e) {
+      console.error("Auto assign error:", e);
+      alert("自動錄取失敗");
+    }
   };
 
   // Student Auto Check
@@ -291,6 +460,7 @@ const App = () => {
     if (viewMode === 'student' && currentVoter && !hasSubmitted) {
       const newDrafts = { ...draftVotes };
       let hasChanges = false;
+
       Object.keys(POSITION_MAP).forEach(posCode => {
         const code = String(posCode);
         const quota = (code === '1' || code === '2') ? 1 : 2;
@@ -320,7 +490,10 @@ const App = () => {
           }
         }
       });
-      if (hasChanges) setDraftVotes(newDrafts);
+
+      if (hasChanges) {
+        setDraftVotes(newDrafts);
+      }
     }
   }, [viewMode, currentVoter, statistics, electionState, candidateLimit]); 
 
@@ -344,6 +517,7 @@ const App = () => {
     }
     const missing = [];
     const missingCodeList = [];
+    
     Object.keys(POSITION_MAP).forEach(posCode => {
       const code = String(posCode);
       const quota = (code === '1' || code === '2') ? 1 : 2;
@@ -395,9 +569,12 @@ const App = () => {
       if (Object.keys(updates).length > 0) {
         await setDoc(docRef, updates, { merge: true });
       }
+      await logActivity(currentVoter, "已完成票選");
       setHasSubmitted(true);
       setShowSuccessModal(true); 
-      setTimeout(() => setShowSuccessModal(false), 2000);
+      setTimeout(() => {
+        setShowSuccessModal(false);
+      }, 2000);
     } catch (e) {
       console.error("Voting error:", e);
       alert("投票送出失敗");
@@ -406,38 +583,6 @@ const App = () => {
     }
   };
 
-  // Helper Functions
-  const formatSeatNo = (val) => {
-    if (!val) return "";
-    const digits = val.replace(/[^0-9]/g, '');
-    if (!digits) return val; 
-    const num = parseInt(digits, 10);
-    return num < 10 ? `0${num}` : `${num}`;
-  };
-  const getStudentNameLabel = (seatNo) => {
-    const name = STUDENT_NAME_MAP[seatNo];
-    if (name) return name.slice(-2);
-    return seatNo; 
-  };
-  const getStudentFullName = (seatNo) => {
-    const name = STUDENT_NAME_MAP[seatNo];
-    return name ? `${seatNo} ${name}` : `座號 ${seatNo}`;
-  };
-  const parseTimestampToYMD = (ts) => {
-    if (!ts) return null;
-    try {
-      const match = ts.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-      if (match) {
-        const year = parseInt(match[1], 10);
-        const month = parseInt(match[2], 10);
-        const day = parseInt(match[3], 10);
-        const mm = String(month).padStart(2, '0');
-        const dd = String(day).padStart(2, '0');
-        return `${year}-${mm}-${dd}`;
-      }
-      return null;
-    } catch (e) { return null; }
-  };
   const handleOpenVoters = (posCode, candidateSeatNo, candidateName) => {
     const key = `${posCode}_${candidateSeatNo}`;
     const voters = voteRecords[key] || [];
@@ -456,13 +601,56 @@ const App = () => {
     }
     setViewingVoters({ posCode, candidateSeatNo, candidateName, voters, ownChoices });
   };
-  
-  // ... Editing & Modal handlers ...
-  const handleClearAll = () => setVisualChoices([]);
-  const handleRemoveChoice = (idx) => setVisualChoices(prev => prev.filter((_, i) => i !== idx));
-  const handleAddChoice = (code) => { if(visualChoices.length < 19) setVisualChoices([...visualChoices, code]) };
 
-  // ... handleCopy, getDuplicates, fetchData, processStudentData, renderAdvancedBattery ... 
+  // Keyboard
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (showPasswordModal) return; 
+      if (!editingStudent || viewMode !== 'teacher') return;
+      if (e.key === 'ArrowLeft') handlePrevStudent();
+      if (e.key === 'ArrowRight') handleNextStudent();
+      if (e.key === 'Escape') setEditingStudent(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editingStudent, studentCounts, viewMode, showPasswordModal]);
+
+  // Init visual choices on edit
+  useEffect(() => {
+    if (editingStudent) {
+      const parts = (editingStudent.original || "").split(/[,，]/).map(p => p.trim());
+      const choiceParts = parts.slice(1);
+      const initialChoices = [];
+      choiceParts.forEach(p => { const c = p.toUpperCase().replace(/[^0-9X]/g, ''); if (c && c !== 'X') initialChoices.push(c); });
+      setVisualChoices(initialChoices);
+      setCopySuccess(false);
+    }
+  }, [editingStudent]);
+
+  // Update generated string
+  useEffect(() => {
+    if (!editingStudent) return;
+    const parts = (editingStudent.original || "").split(/[,，]/).map(p => p.trim());
+    const seatStr = parts[0] || editingStudent.seatNo;
+    setGeneratedString(`${seatStr},${visualChoices.join(',')}`);
+  }, [visualChoices, editingStudent]);
+
+  const handlePrevStudent = () => {
+    if (!editingStudent || studentCounts.length === 0) return;
+    const currentIndex = studentCounts.findIndex(s => s.seatNo === editingStudent.seatNo);
+    if (currentIndex > 0) setEditingStudent(studentCounts[currentIndex - 1]);
+  };
+  const handleNextStudent = () => {
+    if (!editingStudent || studentCounts.length === 0) return;
+    const currentIndex = studentCounts.findIndex(s => s.seatNo === editingStudent.seatNo);
+    if (currentIndex < studentCounts.length - 1) setEditingStudent(studentCounts[currentIndex + 1]);
+  };
+  const handleRemoveChoice = (indexToRemove) => {
+    const newChoices = visualChoices.filter((_, index) => index !== indexToRemove);
+    setVisualChoices(newChoices);
+  };
+  const handleAddChoice = (code) => { if(visualChoices.length < 19) setVisualChoices([...visualChoices, code]) };
+  const handleClearAll = () => setVisualChoices([]);
   const handleCopy = () => {
     const textArea = document.createElement("textarea");
     textArea.value = generatedString;
@@ -474,42 +662,26 @@ const App = () => {
     textArea.select();
     try {
       const successful = document.execCommand('copy');
-      if (successful) {
-        setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000);
-      }
+      if (successful) { setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); }
     } catch (err) { console.error(err); }
     document.body.removeChild(textArea);
   };
-  const getDuplicates = (choices) => {
-    const seen = new Set();
-    const duplicates = new Set();
-    choices.forEach(code => {
-      if (seen.has(code)) duplicates.add(code);
-      seen.add(code);
-    });
-    return duplicates;
-  };
+  const getDuplicates = (choices) => { const s = new Set(); const d = new Set(); choices.forEach(c => { if(s.has(c)) d.add(c); s.add(c); }); return d; };
+  const formatSeatNo = (val) => { if (!val) return ""; const d = val.replace(/[^0-9]/g, ''); if (!d) return val; const n = parseInt(d, 10); return n < 10 ? `0${n}` : `${n}`; };
+  const getStudentNameLabel = (seatNo) => { const name = STUDENT_NAME_MAP[seatNo]; if (name) return name.slice(-2); return seatNo; };
+  const getStudentFullName = (seatNo) => { const name = STUDENT_NAME_MAP[seatNo]; return name ? `${seatNo} ${name}` : `座號 ${seatNo}`; };
+  const parseTimestampToYMD = (ts) => { if (!ts) return null; try { const m = ts.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); if (m) return `${parseInt(m[1],10)}-${String(parseInt(m[2],10)).padStart(2,'0')}-${String(parseInt(m[3],10)).padStart(2,'0')}`; return null; } catch { return null; } };
   const fetchData = async () => {
     setLoading(true);
     try {
       const response = await fetch(CSV_URL);
       const text = await response.text();
-      const rows = text.split(/\r?\n/).map(row => {
-        const regex = /(".*?"|[^",]+)(?=\s*,|\s*$)/g;
-        const matches = row.match(regex);
-        return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : [];
-      }).filter(row => row.length >= 5);
-      const contentRows = rows.slice(1); 
-      setRawRows(contentRows);
+      const rows = text.split(/\r?\n/).map(row => { const regex = /(".*?"|[^",]+)(?=\s*,|\s*$)/g; const matches = row.match(regex); return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : []; }).filter(row => row.length >= 5);
+      const contentRows = rows.slice(1); setRawRows(contentRows);
       if (contentRows.length > 0) {
         let maxDateStr = "";
-        contentRows.forEach(row => {
-          const ymd = parseTimestampToYMD(row[0]);
-          if (ymd) { if (maxDateStr === "" || ymd > maxDateStr) maxDateStr = ymd; }
-        });
-        if (maxDateStr) { setFilterDate(maxDateStr); setDetectedLatestDate(maxDateStr); } 
-        else { setDetectedLatestDate("未偵測到有效日期"); }
+        contentRows.forEach(row => { const ymd = parseTimestampToYMD(row[0]); if (ymd) { if (maxDateStr === "" || ymd > maxDateStr) maxDateStr = ymd; } });
+        if (maxDateStr) { setFilterDate(maxDateStr); setDetectedLatestDate(maxDateStr); } else { setDetectedLatestDate("未偵測到有效日期"); }
       } else { setDetectedLatestDate("無資料"); }
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) { console.error(err); setDetectedLatestDate("讀取失敗"); } 
@@ -543,34 +715,14 @@ const App = () => {
       choiceParts.forEach(p => {
         const clean = p.toUpperCase().replace(/[^0-9X]/g, '');
         if (clean === "") return; 
-        if (clean !== 'X') {
-            if (seen.has(clean)) duplicatesDetected.add(clean);
-            seen.add(clean);
-            effectiveChoices.push(clean);
-        }
+        if (clean !== 'X') { if (seen.has(clean)) duplicatesDetected.add(clean); seen.add(clean); effectiveChoices.push(clean); }
       });
-      tempStudentCounts.push({
-        seatNo: displaySeatNo,
-        count: effectiveChoices.length,
-        hasError: duplicatesDetected.size > 0,
-        original: prefString, 
-        duplicateCodes: Array.from(duplicatesDetected) 
-      });
+      tempStudentCounts.push({ seatNo: displaySeatNo, count: effectiveChoices.length, hasError: duplicatesDetected.size > 0, original: prefString, duplicateCodes: Array.from(duplicatesDetected) });
       if (duplicatesDetected.size > 0) {
-        errorList.push({
-          id: `err-${index}-${displaySeatNo}`,
-          seatNo: displaySeatNo,
-          original: prefString,
-          parsedResult: effectiveChoices.join(', '), 
-          error: "選填代碼重複",
-          duplicateCodes: Array.from(duplicatesDetected)
-        });
+        errorList.push({ id: `err-${index}-${displaySeatNo}`, seatNo: displaySeatNo, original: prefString, parsedResult: effectiveChoices.join(', '), error: "選填代碼重複", duplicateCodes: Array.from(duplicatesDetected) });
         return; 
       }
-      effectiveChoices.forEach((choice, idx) => {
-        const rank = idx + 1;
-        if (rank <= 3) { if (stats[choice]) stats[choice][rank].push(displaySeatNo); }
-      });
+      effectiveChoices.forEach((choice, idx) => { const rank = idx + 1; if (rank <= 3) { if (stats[choice]) stats[choice][rank].push(displaySeatNo); } });
     });
     tempStudentCounts.sort((a, b) => parseInt(a.seatNo,10) - parseInt(b.seatNo,10));
     setStatistics(stats);
@@ -584,12 +736,8 @@ const App = () => {
     else if (count >= 15 && count < 20) colorClass = "bg-orange-300";
     else if (count >= 20) colorClass = "bg-rose-300";
     const shapes = [];
-    if (count >= 5) {
-      shapes.push(<div key="big" className={`h-3 w-4 rounded-sm ${colorClass}`} />);
-      for (let i = 0; i < count % 5; i++) shapes.push(<div key={`r${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />);
-    } else {
-      for (let i = 0; i < count; i++) shapes.push(<div key={`s${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />);
-    }
+    if (count >= 5) { shapes.push(<div key="b" className={`h-3 w-4 rounded-sm ${colorClass}`} />); for(let i=0;i<count%5;i++) shapes.push(<div key={`r${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />); }
+    else { for(let i=0;i<count;i++) shapes.push(<div key={`s${i}`} className={`h-3 w-1.5 rounded-sm ${colorClass}`} />); }
     return shapes;
   };
   
@@ -619,6 +767,7 @@ const App = () => {
         setViewMode('teacher');
         setShowPasswordModal(false);
         setFailedAttempts(0); 
+        // Reset student voting state when entering teacher mode
         setDraftVotes({});
         setCurrentVoter("");
         setHasSubmitted(false);
@@ -643,40 +792,7 @@ const App = () => {
     }
   };
 
-  // ... (SuccessOverlay, StudentSubmitFab components - keep same) ...
-  const StudentSubmitFab = () => {
-    const count = Object.keys(draftVotes).length;
-    if (viewMode !== 'student' || hasSubmitted) return null;
-    return (
-      <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-10 fade-in duration-500 flex items-center gap-3">
-        {!currentVoter && (
-          <div className="bg-rose-500 text-white text-sm font-bold px-4 py-2 rounded-xl animate-bounce">
-            請先在右上方選擇您的座號！
-          </div>
-        )}
-        <button onClick={handleValidateAndSubmit} disabled={count === 0 || isSubmitting || !currentVoter} className={`flex items-center gap-2 px-6 py-4 rounded-full shadow-xl transition-all transform hover:scale-105 active:scale-95 ${count > 0 && !isSubmitting && currentVoter ? 'bg-gradient-to-r from-rose-400 to-orange-400 text-white hover:from-rose-500 hover:to-orange-500' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
-          {isSubmitting ? <RefreshCw className="animate-spin" size={24} /> : <Send size={24} fill="currentColor" />}
-          <div className="flex flex-col items-start"><span className="text-sm font-bold leading-none">送出審慎的一票</span><span className="text-xs font-medium opacity-90 leading-none mt-1">已選 {count} 位候選人</span></div>
-        </button>
-      </div>
-    );
-  };
-  const SuccessOverlay = () => {
-    if (viewMode === 'student' && showSuccessModal) {
-      return (
-        <div className="fixed inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl border-4 border-teal-100 flex flex-col items-center animate-in zoom-in-95 duration-300">
-            <div className="w-20 h-20 bg-teal-100 rounded-full flex items-center justify-center mb-4 text-teal-500"><Check size={48} strokeWidth={3} /></div>
-            <h2 className="text-2xl font-bold text-slate-700 mb-2">投票已送出！</h2>
-            <p className="text-slate-500 font-medium">感謝您神聖的一票</p>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // Define filteredPositions BEFORE usage
+  // Define filteredPositions for Main Render
   const filteredPositions = Object.entries(POSITION_MAP).filter(([code, name]) => 
     name.includes(searchTerm) || code.includes(searchTerm)
   );
@@ -690,41 +806,64 @@ const App = () => {
             <Heart size={40} fill="white" className="text-white" />
           </div>
           <h1 className="text-3xl font-bold text-slate-700 mb-2 text-center">幹部志願選填系統</h1>
-          <p className="text-slate-400 mb-8 text-center font-medium">請使用學校 Google 帳號登入以識別身份</p>
-          
-          <button 
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 p-4 rounded-2xl hover:bg-slate-50 hover:border-indigo-300 hover:shadow-md transition-all group"
-          >
-             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-6 h-6" />
-             <span className="text-slate-600 font-bold group-hover:text-indigo-600">使用 Google 帳號登入</span>
-          </button>
-          
-          {loginError && (
-            <div className="mt-4 bg-rose-50 text-rose-500 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
-              <AlertTriangle size={16} />
-              {loginError}
+          <p className="text-slate-400 mb-8 text-center font-medium">請使用學校 Google 帳號登入</p>
+          <div className="w-full space-y-4">
+            <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 p-4 rounded-2xl hover:bg-slate-50 hover:border-indigo-300 hover:shadow-md transition-all group">
+               <img src="https://www.google.com/favicon.ico" alt="Google" className="w-6 h-6" />
+               <span className="text-slate-600 font-bold group-hover:text-indigo-600">老師登入 (Google)</span>
+            </button>
+            <div className="relative flex py-2 items-center"><div className="flex-grow border-t border-slate-200"></div><span className="flex-shrink-0 mx-4 text-slate-300 text-xs">或</span><div className="flex-grow border-t border-slate-200"></div></div>
+            <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-100">
+              <label className="text-xs font-bold text-indigo-400 uppercase tracking-wider block mb-2 text-center">學生專用通道</label>
+              <div className="flex gap-2">
+                <select className="flex-1 bg-white border-2 border-indigo-100 rounded-xl px-4 py-2 text-sm font-bold text-slate-600 outline-none focus:border-indigo-300 cursor-pointer" value={selectedLoginSeat} onChange={(e) => setSelectedLoginSeat(e.target.value)}>
+                  <option value="">請選擇座號...</option>
+                  {Array.from({length: 30}, (_, i) => {
+                    const num = (i + 1).toString().padStart(2, '0');
+                    return <option key={num} value={num}>{num} {getStudentNameLabel(num)}</option>
+                  })}
+                </select>
+                <button onClick={handleStudentDirectLogin} disabled={loading || !selectedLoginSeat} className={`px-4 py-2 rounded-xl text-white font-bold transition-all shadow-sm ${loading || !selectedLoginSeat ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 active:scale-95'}`}>
+                  {loading ? <RefreshCw className="animate-spin" size={18}/> : <ArrowRight size={18}/>}
+                </button>
+              </div>
             </div>
-          )}
-
-          <div className="mt-8 text-xs text-slate-300 text-center">
-             系統將自動判斷您的身份 (老師/學生)<br/>並引導至對應介面
           </div>
+          {loginError && <div className="mt-4 bg-rose-50 text-rose-500 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"><AlertTriangle size={16} />{loginError}</div>}
         </div>
       </div>
     );
   }
 
-  // --- MAIN APP RENDER ---
+  // --- Force Login Modal (Only show if triggered) ---
+  const ForceLoginModal = () => {
+    if (!showForceLoginModal) return null;
+    return (
+       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full border-4 border-rose-200 p-8 flex flex-col items-center">
+             <div className="bg-rose-100 p-4 rounded-full mb-4 text-rose-500"><AlertTriangle size={32} /></div>
+             <h3 className="text-xl font-bold text-slate-700 mb-2">重複登入偵測</h3>
+             <p className="text-slate-400 text-sm mb-2 text-center">座號 <span className="font-bold text-slate-600">{selectedLoginSeat}</span> 已在其他裝置 ({conflictIP}) 登入。</p>
+             <p className="text-rose-400 text-xs font-bold mb-6 text-center">若要強制登入，請輸入驗證密碼</p>
+             <input type="password" autoFocus className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-center font-bold text-slate-700 outline-none mb-4" placeholder="請輸入密碼..." value={forceLoginPassword} onChange={e => setForceLoginPassword(e.target.value)}/>
+             <div className="flex gap-3 w-full">
+                <button onClick={() => { setShowForceLoginModal(false); setForceLoginPassword(''); }} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-bold">取消</button>
+                <button onClick={handleForceLogin} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 shadow-lg shadow-rose-200">強制登入</button>
+             </div>
+          </div>
+       </div>
+    );
+  }
+
+  // --- MAIN APP UI ---
   return (
     <>
-      <style>
-        {`@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap');`}
-      </style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap');`}</style>
       <div className={`min-h-screen pb-20 relative font-sans ${viewMode === 'teacher' ? 'bg-rose-50' : 'bg-slate-50'}`} style={{ fontFamily: '"Zen Maru Gothic", sans-serif' }}>
         
         <SuccessOverlay />
         <StudentSubmitFab />
+        <ForceLoginModal />
         
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleImportData} />
 
@@ -822,6 +961,47 @@ const App = () => {
                     <button onClick={handleExportData} className="p-2.5 rounded-2xl bg-teal-100 text-teal-600 hover:bg-teal-200"><Download size={20}/></button>
                     <button onClick={triggerImport} className="p-2.5 rounded-2xl bg-sky-100 text-sky-600 hover:bg-sky-200"><Upload size={20}/></button>
                  </div>
+              </div>
+           )}
+
+           {viewMode === 'teacher' && (
+              <div className="mb-8 animate-in fade-in slide-in-from-top-4">
+                <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
+                  <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
+                     <div className="bg-slate-100 p-1.5 rounded-full"><Activity className="text-slate-500" size={20} /></div>
+                     學生登入記錄 (最近 50 筆)
+                  </h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left text-slate-600">
+                      <thead className="text-xs text-slate-400 uppercase bg-slate-50">
+                        <tr>
+                          <th className="px-6 py-3 rounded-l-xl">時間</th>
+                          <th className="px-6 py-3">座號 / 姓名</th>
+                          <th className="px-6 py-3">IP 位址</th>
+                          <th className="px-6 py-3 rounded-r-xl">訊息</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {loginLogs.length > 0 ? (
+                          loginLogs.map((log) => (
+                            <tr key={log.id} className="bg-white border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4 font-mono">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Updating...'}</td>
+                              <td className="px-6 py-4 font-bold text-indigo-600">{log.seatNo} {log.name}</td>
+                              <td className="px-6 py-4 font-mono text-slate-500">{log.ip}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-1 rounded-lg text-xs font-bold ${log.message.includes('強制') ? 'bg-rose-100 text-rose-600' : (log.message.includes('完成') ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-600')}`}>
+                                  {log.message}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-400 italic">尚無紀錄</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
            )}
 
@@ -985,37 +1165,48 @@ const App = () => {
               const p1Candidates = statistics[code]?.[1] || [];
               const p2Candidates = statistics[code]?.[2] || [];
               const p3Candidates = statistics[code]?.[3] || [];
+
               const p1Count = p1Candidates.length;
               const p2Count = p2Candidates.length;
+              
               const isP2Active = p1Count < candidateLimit;
               const isP3Active = (p1Count + p2Count) < candidateLimit;
-              
+
+              // Check if position is "Full" (elected count >= quota)
               const codeStr = String(code);
               const quota = (codeStr === '1' || codeStr === '2') ? 1 : 2;
               let electedCount = 0;
-              Object.values(electionState.selected || {}).forEach(pos => { if (pos === codeStr) electedCount++; });
+              Object.values(electionState.selected || {}).forEach(pos => {
+                if (pos === codeStr) electedCount++;
+              });
               const isPositionFull = electedCount >= quota;
 
+              // Card styling logic
               const isMissingHighlight = viewMode === 'student' && missingCodes.includes(String(code));
+              
+              // Check if student can vote here: Not full, has candidates
               const hasCandidates = p1Candidates.length > 0 || (isP2Active && p2Candidates.length > 0) || (isP3Active && p3Candidates.length > 0);
               const isVoteable = !isPositionFull && hasCandidates;
               
+              // Student View Highlight for Voteable Cards
               const voteableStyle = viewMode === 'student' && isVoteable 
                 ? 'border-indigo-300 shadow-indigo-100 shadow-lg bg-sky-50' 
                 : 'border-slate-50 bg-white';
+              
               const borderClass = isMissingHighlight 
                 ? 'border-orange-400 ring-4 ring-orange-100 shadow-xl bg-orange-50' 
                 : voteableStyle;
 
               const renderGroup = (candidates, rank, active, color) => {
                    const effectiveActive = active && !isPositionFull;
-                   let bgClass, textClass;
+                   let bgClass, textClass, shadowClass;
+                   
                    if (effectiveActive) {
-                      if (color === 'red') { bgClass = 'bg-rose-400'; textClass = 'text-rose-400'; }
-                      else if (color === 'orange') { bgClass = 'bg-orange-300'; textClass = 'text-orange-400'; }
-                      else { bgClass = 'bg-amber-300'; textClass = 'text-amber-400'; }
+                      if (color === 'red') { bgClass='bg-rose-400'; textClass='text-rose-400'; shadowClass='shadow-rose-100'; }
+                      else if (color === 'orange') { bgClass='bg-orange-300'; textClass='text-orange-400'; shadowClass='shadow-orange-100'; }
+                      else { bgClass='bg-amber-300'; textClass='text-amber-400'; shadowClass='shadow-amber-100'; }
                    } else {
-                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400';
+                      bgClass = 'bg-slate-200'; textClass = 'text-slate-400'; shadowClass = 'shadow-none';
                    }
 
                    return (
@@ -1029,43 +1220,67 @@ const App = () => {
                                const key = `${code}_${s}`;
                                const vCount = (voteRecords[key] || []).length;
                                const isDrafted = draftVotes[code] === s;
+                               
                                const selectedPos = electionState.selected?.[s];
                                const isSelectedForThis = selectedPos === String(code);
                                const isSelectedForOther = selectedPos && selectedPos !== String(code);
                                
-                               const isDisabled = (!active || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
+                               // Interaction disabled if:
+                               // 1. Group inactive (limit reached) OR Position Full
+                               // 2. Teacher mode
+                               // 3. Candidate already selected (for this or other)
+                               const isDisabled = (!isActive || isPositionFull) || viewMode === 'teacher' || isSelectedForThis || isSelectedForOther;
                                
-                               const selectedStyle = isSelectedForThis ? 'bg-red-800 text-white ring-0 shadow-sm' : '';
-                               const excludedStyle = isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : '';
+                               // Style for selected candidate (This position)
+                               const selectedStyle = isSelectedForThis 
+                                 ? 'ring-0 shadow-sm' // Dark red, no ring
+                                 : '';
+                                 
+                               // Style for excluded candidate (Selected elsewhere)
+                               // Now same as inactive default + icon
+                               const excludedStyle = isSelectedForOther
+                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                 : '';
+                                 
+                               // Cursor logic
+                               const cursorClass = (isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : (isDisabled && viewMode === 'student' ? 'cursor-not-allowed' : 'cursor-pointer');
 
                                return (
                                   <div key={i} className="flex items-center gap-1">
                                      <button 
                                        onClick={() => {
-                                          if (viewMode === 'student' && isActive && !isDisabled) handleToggleDraftVote(code, s);
+                                          if (viewMode === 'student' && !isDisabled) handleToggleDraftVote(code, s);
                                           if (viewMode === 'teacher') handleOpenVoters(code, s, getStudentNameLabel(s));
                                        }}
-                                       disabled={isDisabled && viewMode === 'student'}
+                                       disabled={isDisabled && viewMode === 'student'} 
                                        className={`
                                           px-1.5 py-1 rounded-xl text-sm font-bold shadow-sm flex items-center gap-0.5 transition-all relative
                                           ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'text-white' : ''}
                                           ${effectiveActive && !isSelectedForThis && !isSelectedForOther ? bgClass : ''}
+                                          ${effectiveActive && !isSelectedForThis && !isSelectedForOther && shadowClass}
                                           ${selectedStyle}
                                           ${excludedStyle}
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
-                                          ${viewMode === 'student' && isActive && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
+                                          ${viewMode === 'student' && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
-                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
+                                          ${isDrafted 
+                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
+                                            : ''}
+                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
+                                          ${cursorClass}
                                        `}
                                        title={getStudentFullName(s)}
                                      >
+                                        {/* 卜 Icon */}
                                         {(isSelectedForThis || isSelectedForOther) && (
                                            <span className={`rounded-full w-4 h-4 flex items-center justify-center text-[10px] mr-0.5 border ${isSelectedForThis ? 'bg-red-600 text-white border-white' : 'bg-transparent text-slate-400 border-slate-300'}`}>卜</span>
                                         )}
                                         {isDrafted && !isSelectedForThis && !isSelectedForOther && <Check size={12} className="mr-0.5" strokeWidth={3}/>}
                                         {getStudentNameLabel(s)}
+                                        {viewMode === 'student' && isDisabled && !isSelectedForThis && !isSelectedForOther && <div className="absolute inset-0 bg-white/50 rounded-xl cursor-not-allowed" />}
                                      </button>
+                                     
+                                     {/* Teacher View OR Student View (Submitted): Show Votes */}
                                      {((viewMode === 'teacher') || (viewMode === 'student' && hasSubmitted)) && vCount > 0 && (
                                         <div className="flex items-end h-3 gap-[1px]">{renderAdvancedBattery(vCount)}</div>
                                      )}
@@ -1078,21 +1293,26 @@ const App = () => {
               };
 
               return (
-                 <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
-                    <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
-                       <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
-                          <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
-                          {name}
-                          {isPositionFull && <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">滿</span>}
-                       </h3>
-                    </div>
-                    <div className="p-3 space-y-3 flex-1">
-                       {renderGroup(p1Candidates, 1, true, 'red')}
-                       {renderGroup(p2Candidates, 2, isP2Active, 'orange')}
-                       {renderGroup(p3Candidates, 3, isP3Active, 'yellow')}
-                    </div>
-                 </div>
-              )
+              <div key={code} className={`rounded-3xl shadow-sm border-2 overflow-hidden flex flex-col transition-all group ${borderClass}`}>
+                <div className={`p-3 border-b flex justify-between items-center transition-colors ${missingCodes.includes(String(code)) && viewMode === 'student' ? 'bg-orange-100 border-orange-200' : (isVoteable && viewMode === 'student' ? 'bg-sky-100/50 border-indigo-200' : 'bg-slate-50/50 border-slate-100 group-hover:bg-sky-50/30')}`}>
+                  <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                    <span className="text-slate-300 text-sm font-mono bg-white px-1.5 rounded-md border border-slate-100">{code}</span>
+                    {name}
+                    {isPositionFull && (
+                      <span className="bg-red-600 text-white border border-white w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-sm ml-1">
+                        滿
+                      </span>
+                    )}
+                  </h3>
+                </div>
+                
+                <div className="p-3 space-y-3 flex-1">
+                  {renderPriorityGroup(p1Candidates, 1, true, 'red')}
+                  {renderPriorityGroup(p2Candidates, 2, isP2Active, 'orange')}
+                  {renderPriorityGroup(p3Candidates, 3, isP3Active, 'yellow')}
+                </div>
+              </div>
+            );
             })}
           </div>
         </main>
@@ -1102,4 +1322,3 @@ const App = () => {
 };
 
 export default App;
-
