@@ -255,12 +255,10 @@ const App = () => {
   // --- Session Monitor ---
   useEffect(() => {
     if (viewMode === 'student' && currentVoter && db) {
-      // Listen to MY active session
       const sessionDocRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
       const unsubSession = onSnapshot(sessionDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // If the session ID in DB doesn't match MY session ID, I've been kicked
           if (data.sessionId && data.sessionId !== sessionId) {
             alert(`偵測到重複登入或已強制登出！\n\n您的帳號已在其他裝置 (IP: ${data.ip}) 登入。`);
             handleLogout();
@@ -335,6 +333,10 @@ const App = () => {
        setUserRole(seatNo);
        setCurrentVoter(seatNo);
 
+       // 1. 先登入 (取得權限)
+       await signInAnonymously(auth);
+
+       // 2. 寫入 Session (需要權限)
        const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', seatNo);
        await setDoc(sessionRef, {
          ip: clientIP,
@@ -342,14 +344,18 @@ const App = () => {
          timestamp: serverTimestamp()
        });
 
+       // 3. 寫入 Log (需要權限)
        await logActivity(seatNo, logMessage);
-       await signInAnonymously(auth);
        
        setShowForceLoginModal(false);
        setForceLoginPassword('');
     } catch (e) {
        console.error("Login Error", e);
-       setLoginError("登入過程發生錯誤");
+       setLoginError("登入過程發生錯誤：請確認 Firebase 已啟用 Anonymous 登入");
+       // 如果登入失敗，回滾狀態
+       setUserRole(null);
+       setCurrentVoter("");
+       signOut(auth);
     } finally {
        setLoading(false);
     }
@@ -364,7 +370,7 @@ const App = () => {
   };
 
   const handleLogout = async () => {
-    if (currentVoter && db) {
+    if (currentVoter && db && currentUser) {
       try {
         const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
         await deleteDoc(sessionRef); 
@@ -1302,7 +1308,7 @@ const App = () => {
                                
                                // Style for selected candidate (This position)
                                const selectedStyle = isSelectedForThis 
-                                 ? 'ring-0 shadow-sm' // Removed border, reduced padding logic in className
+                                 ? 'ring-0 shadow-sm' // Dark red, no ring
                                  : '';
                                  
                                // Style for excluded candidate (Selected elsewhere)
@@ -1332,11 +1338,8 @@ const App = () => {
                                           ${!effectiveActive && !isSelectedForThis && !isSelectedForOther ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}
                                           ${viewMode === 'student' && active && !isDisabled && !hasSubmitted ? 'hover:scale-105 active:scale-95 cursor-pointer' : ''}
                                           ${viewMode === 'teacher' ? 'cursor-pointer hover:opacity-80' : ''}
-                                          ${isDrafted 
-                                            ? `ring-2 ring-offset-1 ${colorTheme === 'red' ? 'bg-rose-500 ring-rose-200 text-white' : colorTheme === 'orange' ? 'bg-orange-500 ring-orange-200 text-white' : 'bg-amber-500 ring-amber-200 text-white'}` 
-                                            : ''}
-                                          ${viewMode === 'student' && hasSubmitted ? 'opacity-70 cursor-default' : ''}
-                                          ${cursorClass}
+                                          ${isDrafted ? 'ring-2 ring-offset-1 ring-indigo-300' : ''}
+                                          ${(isSelectedForThis || isSelectedForOther) ? 'cursor-not-allowed' : ''}
                                        `}
                                        title={getStudentFullName(s)}
                                      >
