@@ -172,11 +172,7 @@ const App = () => {
 
   // --- Initial Setup ---
   useEffect(() => {
-    fetch('https://api.ipify.org?format=json')
-      .then(res => res.json())
-      .then(data => setClientIP(data.ip))
-      .catch(err => console.error("IP Fetch Error:", err));
-      
+    // Generate session ID
     setSessionId(Math.random().toString(36).substring(2, 15));
   }, []);
 
@@ -237,7 +233,7 @@ const App = () => {
       const logsQuery = query(
         collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs'),
         orderBy('timestamp', 'desc'),
-        limit(50)
+        limit(40) // Show last 40 records as requested
       );
       unsubLogs = onSnapshot(logsQuery, (snapshot) => {
         const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -271,14 +267,14 @@ const App = () => {
 
   // --- Logic Handlers ---
 
-  const logActivity = async (seatNo, message) => {
+  const logActivity = async (seatNo, message, ip) => {
     if (!db) return;
     try {
       await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'loginLogs'), {
         timestamp: serverTimestamp(),
         seatNo: seatNo,
         name: getStudentNameLabel(seatNo),
-        ip: clientIP || 'Unknown',
+        ip: ip || 'Unknown',
         message: message
       });
     } catch (e) {
@@ -305,21 +301,32 @@ const App = () => {
     setLoading(true);
     
     try {
+      // 1. Fetch IP on demand (Student clicks arrow)
+      let currentIp = 'Unknown';
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        currentIp = ipData.ip;
+        setClientIP(currentIp); // Update state
+      } catch (err) {
+        console.warn("IP Fetch Failed", err);
+      }
+
       const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', selectedLoginSeat);
       const sessionSnap = await getDoc(sessionRef);
 
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
-        // 如果 Session 存在，視為衝突，要求強制登入
         if (true) { 
            setConflictIP(sessionData.ip || 'Unknown');
+           // setPendingLoginIp(currentIp); 
            setShowForceLoginModal(true); 
            setLoading(false);
            return;
         }
       }
 
-      await performLogin(selectedLoginSeat, "登入成功");
+      await performLogin(selectedLoginSeat, "登入成功", currentIp);
 
     } catch (error) {
       console.error("Check Session Failed", error);
@@ -328,34 +335,26 @@ const App = () => {
     }
   };
 
-  const performLogin = async (seatNo, logMessage) => {
+  const performLogin = async (seatNo, logMessage, ip) => {
     try {
        setUserRole(seatNo);
        setCurrentVoter(seatNo);
 
-       // 1. 先登入 (取得權限)
-       await signInAnonymously(auth);
-
-       // 2. 寫入 Session (需要權限)
        const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', seatNo);
        await setDoc(sessionRef, {
-         ip: clientIP,
+         ip: ip || clientIP,
          sessionId: sessionId,
          timestamp: serverTimestamp()
        });
 
-       // 3. 寫入 Log (需要權限)
-       await logActivity(seatNo, logMessage);
+       await logActivity(seatNo, logMessage, ip || clientIP);
+       await signInAnonymously(auth);
        
        setShowForceLoginModal(false);
        setForceLoginPassword('');
     } catch (e) {
        console.error("Login Error", e);
-       setLoginError("登入過程發生錯誤：請確認 Firebase 已啟用 Anonymous 登入");
-       // 如果登入失敗，回滾狀態
-       setUserRole(null);
-       setCurrentVoter("");
-       signOut(auth);
+       setLoginError("登入過程發生錯誤");
     } finally {
        setLoading(false);
     }
@@ -366,11 +365,11 @@ const App = () => {
       alert("密碼錯誤！請通知老師。");
       return;
     }
-    await performLogin(selectedLoginSeat, "發現重複登入，已強制登出舊連線");
+    await performLogin(selectedLoginSeat, "發現重複登入，已強制登出舊連線", clientIP);
   };
 
   const handleLogout = async () => {
-    if (currentVoter && db && currentUser) {
+    if (currentVoter && db) {
       try {
         const sessionRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'activeSessions', currentVoter);
         await deleteDoc(sessionRef); 
@@ -566,7 +565,16 @@ const App = () => {
       if (Object.keys(updates).length > 0) {
         await setDoc(docRef, updates, { merge: true });
       }
-      await logActivity(currentVoter, "已完成票選");
+      
+      // On submit, fetch IP again for log
+      let currentIp = 'Unknown';
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json');
+        const ipData = await ipRes.json();
+        currentIp = ipData.ip;
+      } catch (e) {}
+
+      await logActivity(currentVoter, "已完成票選", currentIp);
       setHasSubmitted(true);
       setShowSuccessModal(true); 
       setTimeout(() => setShowSuccessModal(false), 2000);
@@ -995,10 +1003,10 @@ const App = () => {
                    <div className="flex items-center gap-2 bg-white border-2 border-indigo-200 rounded-full px-3 py-1.5 ml-auto md:ml-0 shadow-sm">
                      <User size={16} className="text-indigo-400" />
                      {/* Lock seat selector to authenticated user role if student */}
-                     <span className="text-sm font-bold text-slate-600">{currentVoter} {getStudentNameLabel(currentVoter)}</span>
+                     <span className="text-sm font-bold text-slate-600 w-24 text-center inline-block">{currentVoter} {getStudentNameLabel(currentVoter)}</span>
                    </div>
                  )}
-                 {viewMode === 'teacher' && <button onClick={()=>setShowMapModal(true)} className="flex gap-1 bg-white border-2 border-slate-200 px-4 py-2 rounded-full text-sm font-bold hover:bg-slate-50"><Table size={16}/><span className="hidden sm:inline">代碼表</span></button>}
+                 {viewMode === 'teacher' && <button onClick={()=>setShowMapModal(true)} className="flex gap-1 bg-white border-2 border-slate-200 px-4 py-2 rounded-full text-sm font-bold hover:bg-slate-50 whitespace-nowrap shadow-sm"><Table size={16}/><span className="hidden sm:inline">代碼表</span></button>}
               </div>
               <div className="flex items-center gap-2">
                  {viewMode === 'teacher' && <button onClick={fetchData} disabled={loading} className="flex gap-2 bg-white border-2 border-rose-200 text-rose-500 px-4 py-2 rounded-full text-sm font-bold hover:bg-rose-50"><RefreshCw size={16} className={loading?"animate-spin":""}/><span className="hidden sm:inline">同步</span></button>}
@@ -1062,47 +1070,6 @@ const App = () => {
                 </div>
              </div>
           )}
-
-          {viewMode === 'teacher' && (
-              <div className="mb-8 animate-in fade-in slide-in-from-top-4">
-                <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
-                  <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
-                     <div className="bg-slate-100 p-1.5 rounded-full"><Activity className="text-slate-500" size={20} /></div>
-                     學生登入記錄 (最近 50 筆)
-                  </h2>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left text-slate-600">
-                      <thead className="text-xs text-slate-400 uppercase bg-slate-50">
-                        <tr>
-                          <th className="px-6 py-3 rounded-l-xl">時間</th>
-                          <th className="px-6 py-3">座號 / 姓名</th>
-                          <th className="px-6 py-3">IP 位址</th>
-                          <th className="px-6 py-3 rounded-r-xl">訊息</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {loginLogs.length > 0 ? (
-                          loginLogs.map((log) => (
-                            <tr key={log.id} className="bg-white border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-4 font-mono">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Updating...'}</td>
-                              <td className="px-6 py-4 font-bold text-indigo-600">{log.seatNo} {log.name}</td>
-                              <td className="px-6 py-4 font-mono text-slate-500">{log.ip}</td>
-                              <td className="px-6 py-4">
-                                <span className={`px-2 py-1 rounded-lg text-xs font-bold ${log.message.includes('強制') ? 'bg-rose-100 text-rose-600' : (log.message.includes('完成') ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-600')}`}>
-                                  {log.message}
-                                </span>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-400 italic">尚無紀錄</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-           )}
 
           {studentCounts.length > 0 && (
             <div className="mb-8">
@@ -1308,7 +1275,7 @@ const App = () => {
                                
                                // Style for selected candidate (This position)
                                const selectedStyle = isSelectedForThis 
-                                 ? 'ring-0 shadow-sm' // Dark red, no ring
+                                 ? 'ring-0 shadow-sm' // Removed border, reduced padding logic in className
                                  : '';
                                  
                                // Style for excluded candidate (Selected elsewhere)
@@ -1387,6 +1354,48 @@ const App = () => {
             );
             })}
           </div>
+          
+          {viewMode === 'teacher' && (
+              <div className="mt-8 animate-in fade-in slide-in-from-top-4">
+                <div className="bg-white/80 border-2 border-slate-200 rounded-3xl p-6 shadow-sm overflow-hidden">
+                  <h2 className="text-slate-600 font-bold flex items-center gap-2 text-lg mb-4">
+                     <div className="bg-slate-100 p-1.5 rounded-full"><Activity className="text-slate-500" size={20} /></div>
+                     學生登入記錄 (最近 40 筆)
+                  </h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left text-slate-600">
+                      <thead className="text-xs text-slate-400 uppercase bg-slate-50">
+                        <tr>
+                          <th className="px-6 py-3 rounded-l-xl">時間</th>
+                          <th className="px-6 py-3">座號 / 姓名</th>
+                          <th className="px-6 py-3">IP 位址</th>
+                          <th className="px-6 py-3 rounded-r-xl">訊息</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {loginLogs.length > 0 ? (
+                          loginLogs.map((log) => (
+                            <tr key={log.id} className="bg-white border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4 font-mono">{log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Updating...'}</td>
+                              <td className="px-6 py-4 font-bold text-indigo-600">{log.seatNo} {log.name}</td>
+                              <td className="px-6 py-4 font-mono text-slate-500">{log.ip}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-1 rounded-lg text-xs font-bold ${log.message.includes('強制') ? 'bg-rose-100 text-rose-600' : (log.message.includes('完成') ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-600')}`}>
+                                  {log.message}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-400 italic">尚無紀錄</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+           )}
+
         </main>
       </div>
     </>
